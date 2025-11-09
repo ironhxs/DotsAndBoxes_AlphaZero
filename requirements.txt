@@ -1,0 +1,20 @@
+# Core dependencies
+# 基于 GMD 环境，只需额外安装 OpenSpiel
+# GMD 环境已包含: numpy, torch, tqdm 等
+
+# OpenSpiel - 游戏环境（点格棋）
+open_spiel
+
+# 安装方法:
+# conda activate gmd
+# pip install open_spiel
+numpy>=1.21.0
+torch>=1.10.0
+tqdm>=4.62.0
+
+# Training and logging
+tensorboard>=2.8.0
+matplotlib>=3.5.0
+
+# Optional (for better performance)
+psutil>=5.8.0

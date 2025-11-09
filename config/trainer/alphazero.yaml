@@ -1,0 +1,36 @@
+# AlphaZero 训练器配置
+
+# 训练器类型
+name: "alphazero"
+
+# 优化器
+optimizer: "adam"           # adam, sgd, adamw
+momentum: 0.9               # SGD momentum
+nesterov: true              # 使用 Nesterov momentum
+
+# 学习率调度
+lr_scheduler: "step"        # step, cosine, poly, none
+lr_decay_steps: [500, 800]  # StepLR 的衰减步数
+lr_decay_gamma: 0.1         # 学习率衰减因子
+
+# 损失函数权重
+value_loss_weight: 1.0      # 价值损失权重
+policy_loss_weight: 1.0     # 策略损失权重
+
+# 梯度裁剪
+grad_clip: 5.0              # 梯度裁剪阈值，None 表示不裁剪
+
+# 经验回放
+min_replay_size: 1000       # 开始训练前的最小样本数
+prioritized_replay: false   # 是否使用优先经验回放
+
+# 数据增强
+augment_data: false         # 是否使用对称性增强数据
+
+# Early Stopping
+patience: 50                # 早停耐心值（迭代次数）
+min_delta: 0.001            # 最小改进量
+
+# Checkpoint 管理
+save_best_only: false       # 是否只保存最佳模型
+keep_checkpoint_max: 5      # 最多保留的 checkpoint 数量

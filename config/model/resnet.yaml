@@ -1,0 +1,29 @@
+# ResNet 模型配置（适用于点格棋）
+
+# 模型类型
+name: "resnet"
+
+# 网络结构
+num_residual_blocks: 5      # 残差块数量（轻量级：5, 标准：10-20）
+num_filters: 64             # 卷积核数量（轻量级：64, 标准：128-256）
+kernel_size: 3              # 卷积核大小
+
+# 策略头（Policy Head）
+policy_filters: 2           # 策略头的卷积核数量
+policy_fc_size: 256         # 策略头全连接层大小
+
+# 价值头（Value Head）
+value_filters: 1            # 价值头的卷积核数量
+value_fc_size: 256          # 价值头全连接层大小
+
+# 激活函数
+activation: "relu"          # relu, leaky_relu, elu
+
+# Batch Normalization
+use_batch_norm: true
+
+# Dropout（防止过拟合）
+dropout: 0.0                # 0.0 表示不使用 dropout
+
+# 权重初始化
+weight_init: "kaiming"      # kaiming, xavier, normal

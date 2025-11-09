@@ -1,0 +1,67 @@
+# -*- coding: utf-8 -*-
+# AlphaZero 点格棋主配置文件
+# 采用 Hydra 配置管理（与 GMD 一致）
+
+defaults:
+  - _self_
+  - game: dots_and_boxes
+  - model: resnet
+  - trainer: alphazero
+
+# 运行模式
+mode: "train"  # train, eval, play, arena
+
+# 硬件配置
+cuda: true
+gpu_ids: "0"
+seed: 42
+
+# 训练配置
+num_iterations: 1000        # AlphaZero 总迭代次数
+checkpoint_interval: 10     # 每隔多少次迭代保存模型
+eval_interval: 5            # 每隔多少次迭代评估模型
+
+# 自我对弈配置
+num_self_play_games: 100    # 每次迭代的自我对弈局数
+num_parallel_games: 8       # 并行对弈的游戏数
+temperature_threshold: 15   # 前N步使用温度采样，之后贪心
+
+# MCTS 配置
+num_simulations: 100        # 每次决策的 MCTS 模拟次数
+cpuct: 1.0                  # UCB 探索常数
+dirichlet_alpha: 0.3        # Dirichlet 噪声参数
+dirichlet_epsilon: 0.25     # 添加噪声的比例
+
+# 神经网络训练配置
+batch_size: 256
+learning_rate: 0.001
+weight_decay: 1e-4
+train_epochs: 1             # 每次迭代训练网络的轮数
+replay_buffer_size: 20000
+
+# 混合精度训练（节省显存，加速训练）
+use_amp: true
+
+# 路径配置
+save_to: "results/dots_and_boxes"
+checkname: "alphazero_6x6"
+
+# 日志配置
+log_interval: 10            # 每隔多少局游戏记录一次
+tensorboard: true
+
+# 评估配置
+num_eval_games: 50          # 评估时的对局数
+eval_against: "random"      # random, mcts_baseline, previous
+
+# Arena 配置（模型对战）
+arena_games: 100            # Arena 对战局数
+arena_threshold: 0.55       # 新模型胜率阈值（超过才替换旧模型）
+
+# 可视化
+visualize: false
+save_game_records: true
+
+# 分布式训练（可选）
+distributed: false
+world_size: 1

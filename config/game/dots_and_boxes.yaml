@@ -1,0 +1,31 @@
+# 点格棋游戏配置
+
+# 游戏类型
+name: "dots_and_boxes"
+
+# 棋盘大小（使用 OpenSpiel 标准）
+# OpenSpiel 中 dots_and_boxes 的参数是 num_rows 和 num_cols
+# 对于 6x6 点阵，格子数是 5x5
+num_rows: 5  # 格子的行数
+num_cols: 5  # 格子的列数
+
+# 观察空间配置
+# 输入通道数
+num_input_channels: 3
+# Channel 0: 水平边占据情况 (shape: num_rows+1 x num_cols)
+# Channel 1: 垂直边占据情况 (shape: num_rows x num_cols+1)
+# Channel 2: 格子归属情况 (shape: num_rows x num_cols)
+#            0=未占据, 1=当前玩家, -1=对手玩家
+
+# 动作空间
+# 总边数 = 水平边数 + 垂直边数
+# = (num_rows+1) * num_cols + num_rows * (num_cols+1)
+# 对于 5x5 格子: 6*5 + 5*6 = 60 条边
+action_size: 60
+
+# 游戏规则
+# 连续占边规则：当玩家完成一个格子时，继续行动
+continue_on_capture: true
+
+# 最大步数（防止无限循环）
+max_game_length: 120  # 两倍于边数
