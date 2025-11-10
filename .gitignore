@@ -51,6 +51,10 @@ results/checkpoints/*.pth
 results/logs/*.log
 *.log
 
+# TensorBoard logs
+results/logs/tensorboard/
+events.out.tfevents.*
+
 # Temporary files
 *.tmp
 *.bak

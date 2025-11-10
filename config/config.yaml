@@ -55,8 +55,11 @@ num_eval_games: 50          # 评估时的对局数
 eval_against: "random"      # random, mcts_baseline, previous
 
 # Arena 配置（模型对战）
+arena_mode: "gpu_thread"    # gpu_thread（GPU+多线程，推荐）, multiprocess（CPU多进程）, batch（实验性）
 arena_games: 100            # Arena 对战局数
 arena_threshold: 0.55       # 新模型胜率阈值（超过才替换旧模型）
+arena_num_workers: 6        # Arena 并行度（gpu_thread模式下为线程数）
+arena_mcts_simulations: 200 # Arena MCTS 模拟次数（高精度评估）
 
 # 可视化
 visualize: false

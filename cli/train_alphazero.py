@@ -45,37 +45,43 @@ def true_alphazero_train():
         'num_cols': 5,
         
         # ✅ AlphaZero核心: Arena对战配置
-        'arena_compare': 20,       # Arena对战局数 (偶数)
+        'arena_compare': 20,       # Arena对战局数 (偶数，建议10-40局)
         'update_threshold': 0.55,  # 新模型必须>55%胜率才接受
         
-        # 多进程并行
+        # 并行配置
         'use_parallel': True,
-        'num_workers': 6,
+        'self_play_mode': 'batch',  # ⚠️ 暂时fallback到multiprocess（GIL限制）
+        'num_workers': 10,          # 自我对弈CPU进程数
         
-        # MCTS配置
-        'num_simulations': 25,     # Arena对战用更多模拟保证质量
+        # Arena配置
+        'arena_mode': 'gpu_multiprocess',  # 🚀 GPU多进程模式（推荐：真正的多核并行）
+        'arena_num_workers': 2,            # Arena进程数（⚠️ 每个进程2个模型，避免OOM）
+        
+        # MCTS配置 - ⚡ 提高搜索质量
+        'num_simulations': 100,        # 自我对弈MCTS (探索+质量平衡)
+        'arena_mcts_simulations': 200, # Arena评估MCTS (2倍，确保准确)
         'cpuct': 1.0,
         'dirichlet_alpha': 0.3,
         'dirichlet_epsilon': 0.25,
         'temp_threshold': 15,
         
-        # 训练规模
-        'num_iterations': 600,     # 600次迭代 (充分训练)
-        'num_episodes': 80,        # 每次迭代80局自我对弈 (提升显存利用)
-        'arena_interval': 20,      # 每20次迭代进行一次Arena验证
+        # 训练规模 - 高质量数据策略
+        'num_iterations': 600,     # 600次迭代
+        'num_episodes': 80,        
+        'arena_interval': 1,      # 每20次迭代进行一次Arena验证
         'max_queue_length': 50000,
         'num_iters_for_train_examples_history': 20,
         
         # 神经网络训练
-        'epochs': 300,             # 300轮充分训练（数据珍贵）
-        'batch_size': 1024,        # 512 → 1024 (更大batch提升GPU利用率)
+        'epochs': 300,            
+        'batch_size': 2048,        
         'lr': 0.002,
         'weight_decay': 1e-4,
         
-        # 现代模型配置 (Transformer + ConvNeXt)
-        'num_filters': 384,      # Transformer embedding dimension (更大)
-        'num_res_blocks': 18,    # 9 ConvNeXt + 9 Transformer blocks (更深)
-        'num_heads': 12,         # Multi-head attention heads (更多注意力头)
+        # 简化模型配置 (更快推理 + 100次MCTS)
+        'num_filters': 256,      # 384→256 (减少33%参数)
+        'num_res_blocks': 12,    # 18→12 (减少6层)
+        'num_heads': 8,          # 12→8 (减少注意力头)
         
         # 其他
         'cuda': torch.cuda.is_available(),
@@ -84,17 +90,18 @@ def true_alphazero_train():
     }
     
     print("=" * 80)
-    print("🧠 AlphaZero 训练系统 - 长期训练优化版")
+    print("🧠 AlphaZero 训练系统 - 高质量搜索优化版")
     print("=" * 80)
     print(f"训练迭代: {args['num_iterations']} 次")
-    print(f"每次迭代: {args['num_episodes']} 局自我对弈 (提升显存利用)")
-    print(f"Arena验证: 每 {args['arena_interval']} 次迭代验证一次 ({args['arena_compare']} 局对战)")
+    print(f"每次迭代: {args['num_episodes']} 局自我对弈")
+    print(f"Arena验证: 每 {args['arena_interval']} 次迭代 ({args['arena_compare']} 局)")
     print(f"更新阈值: {args['update_threshold']*100}% 胜率")
-    print(f"并行进程: {args['num_workers']} 个")
-    print(f"MCTS模拟: {args['num_simulations']} 次")
+    print(f"⚙️  自我对弈: {args['num_workers']} CPU进程（各自GPU） | MCTS={args['num_simulations']}次")
+    print(f"⚙️  Arena对战: {args['arena_num_workers']} CPU进程（各自GPU） | MCTS={args['arena_mcts_simulations']}次")
+    print(f"⚠️  注意: Python GIL限制，批量推理模式暂不可用")
     print(f"神经网络: Transformer + ConvNeXt ({args['num_filters']}d × {args['num_res_blocks']} blocks)")
     print(f"注意力机制: {args['num_heads']}-head Self-Attention")
-    print(f"训练规模: Batch={args['batch_size']}, Epochs={args['epochs']} (深度学习)")
+    print(f"训练规模: Batch={args['batch_size']}, Epochs={args['epochs']}")
     print(f"GPU加速: {'✅ CUDA可用' if args['cuda'] else '❌ 仅CPU'}")
     print("=" * 80)
     print()
