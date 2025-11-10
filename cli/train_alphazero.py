@@ -55,7 +55,7 @@ def true_alphazero_train():
         
         # Arena配置
         'arena_mode': 'gpu_multiprocess',  # 🚀 GPU多进程模式（推荐：真正的多核并行）
-        'arena_num_workers': 2,            # Arena进程数（⚠️ 每个进程2个模型，避免OOM）
+        'arena_num_workers': 8,            # Arena进程数（⚠️ 每个进程2个模型，避免OOM）
         
         # MCTS配置 - ⚡ 提高搜索质量
         'num_simulations': 100,        # 自我对弈MCTS (探索+质量平衡)
