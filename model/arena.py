@@ -213,7 +213,7 @@ class RandomPlayer:
 
 def compare_models(game, new_nnet, old_nnet, args):
     """
-    比较新旧模型
+    比较新旧模型（支持GPU并行）
     
     Args:
         game: 游戏环境
@@ -224,6 +224,23 @@ def compare_models(game, new_nnet, old_nnet, args):
     Returns:
         (win_rate, should_accept): 胜率和是否接受新模型
     """
+    arena_mode = args.get('arena_mode', 'serial')
+    cuda_enabled = args.get('cuda', False)
+    
+    print(f"  Arena 模式: {arena_mode}, CUDA: {cuda_enabled}")
+    
+    if arena_mode == 'gpu_parallel' and cuda_enabled:
+        # GPU 多进程并行模式
+        return _compare_models_gpu_parallel(game, new_nnet, old_nnet, args)
+    else:
+        # 串行模式（原始实现）
+        if arena_mode == 'gpu_parallel' and not cuda_enabled:
+            print(f"  ⚠️  GPU并行模式需要启用CUDA，降级到串行模式")
+        return _compare_models_serial(game, new_nnet, old_nnet, args)
+
+
+def _compare_models_serial(game, new_nnet, old_nnet, args):
+    """串行比较模型（原始实现）"""
     # 创建MCTS参数 (Arena用更多模拟次数)
     arena_args = args.copy()
     arena_args['num_simulations'] = args.get('arena_mcts_simulations', 200)
@@ -240,9 +257,10 @@ def compare_models(game, new_nnet, old_nnet, args):
     # 创建Arena
     arena = Arena(game, new_player, old_player, arena_args)
     
-    # 进行对战
+    # 进行对战 - 使用配置的对战局数（串行模式）
     num_games = args.get('arena_compare', 40)
-    new_wins, old_wins, draws = arena.play_games(num_games)
+    print(f"  ⚙️  串行模式: {num_games} 局对战")
+    new_wins, old_wins, draws = arena.play_games(num_games, num_workers=1)
     
     # 计算胜率
     total_decisive = new_wins + old_wins
@@ -266,3 +284,170 @@ def compare_models(game, new_nnet, old_nnet, args):
     print(f"{'='*60}\n")
     
     return win_rate, should_accept
+
+
+def _compare_models_gpu_parallel(game, new_nnet, old_nnet, args):
+    """GPU 多进程并行比较模型"""
+    import multiprocessing as mp
+    from multiprocessing import Manager
+    import random
+    
+    mp.set_start_method('spawn', force=True)
+    
+    num_games = args.get('arena_compare', 40)
+    num_workers = min(args.get('arena_num_workers', 10), num_games)
+    
+    # 生成先手分配（交替先手）
+    starts = [i % 2 == 0 for i in range(num_games)]
+    
+    # 准备共享的模型状态
+    new_state_dict = new_nnet.state_dict()
+    old_state_dict = old_nnet.state_dict() if old_nnet is not None else None
+    
+    # 创建任务列表
+    tasks = [(i, starts[i], new_state_dict, old_state_dict, args) for i in range(num_games)]
+    
+    # 并行执行
+    print(f"  🚀 GPU 并行模式: {num_workers} 个进程，{num_games} 局对战")
+    
+    with mp.Pool(num_workers) as pool:
+        results = list(tqdm(
+            pool.imap(_arena_worker_gpu, tasks),
+            total=num_games,
+            desc=f"  Arena对战(GPU×{num_workers})"
+        ))
+    
+    # 统计结果
+    new_wins = sum(1 for r in results if r == 1)
+    old_wins = sum(1 for r in results if r == -1)
+    draws = sum(1 for r in results if r == 0)
+    
+    # 计算胜率
+    total_decisive = new_wins + old_wins
+    if total_decisive > 0:
+        win_rate = new_wins / total_decisive
+    else:
+        win_rate = 0.5
+    
+    # 判断是否接受
+    threshold = args.get('update_threshold', 0.55)
+    should_accept = win_rate >= threshold
+    
+    # 打印结果
+    print(f"\n{'='*60}")
+    print(f"Arena对战结果 (GPU并行):")
+    print(f"  新模型: {new_wins}胜 ({win_rate*100:.1f}%)")
+    print(f"  旧模型: {old_wins}胜")
+    print(f"  平局: {draws}")
+    print(f"  阈值: {threshold*100:.1f}%")
+    print(f"  决定: {'✅ 接受新模型' if should_accept else '❌ 拒绝新模型，保留旧模型'}")
+    print(f"{'='*60}\n")
+    
+    return win_rate, should_accept
+
+
+def _arena_worker_gpu(task):
+    """GPU 并行 Arena 工作进程"""
+    import torch
+    import gc
+    from .game import DotsAndBoxesGame
+    from .mcts import MCTS
+    
+    game_idx, player1_starts, new_state_dict, old_state_dict, args = task
+    
+    try:
+        # 设置 CUDA
+        if args.get('cuda', False):
+            torch.cuda.set_device(0)
+        
+        # 创建游戏环境
+        game = DotsAndBoxesGame()
+        
+        # 创建神经网络（根据配置选择架构）
+        if args.get('model_type') == 'transformer':
+            from .model_transformer import DotsAndBoxesTransformer
+            new_nnet = DotsAndBoxesTransformer(game, args)
+            old_nnet = DotsAndBoxesTransformer(game, args) if old_state_dict else None
+        else:
+            from .model import DotsAndBoxesResNet
+            new_nnet = DotsAndBoxesResNet(game, args)
+            old_nnet = DotsAndBoxesResNet(game, args) if old_state_dict else None
+        
+        # 加载模型权重
+        new_nnet.load_state_dict(new_state_dict, strict=False)
+        if old_nnet and old_state_dict:
+            old_nnet.load_state_dict(old_state_dict, strict=False)
+        
+        # 移到 GPU
+        if args.get('cuda', False):
+            new_nnet.cuda()
+            if old_nnet:
+                old_nnet.cuda()
+        
+        new_nnet.eval()
+        if old_nnet:
+            old_nnet.eval()
+        
+        # 创建 MCTS 参数
+        arena_args = args.copy()
+        arena_args['num_simulations'] = args.get('arena_mcts_simulations', 100)
+        
+        # 创建 MCTS
+        new_mcts = MCTS(game, new_nnet, arena_args)
+        old_mcts = MCTS(game, old_nnet, arena_args) if old_nnet else None
+        
+        # 创建玩家映射
+        player_mapping = {
+            0: new_mcts if player1_starts else old_mcts,
+            1: old_mcts if player1_starts else new_mcts,
+        }
+        player1_actual_id = 0 if player1_starts else 1
+        
+        # 进行对战
+        state = game.get_initial_state()
+        move_count = 0
+        max_moves = arena_args.get('arena_max_moves', 300)
+        
+        while not game.is_terminal(state) and move_count < max_moves:
+            move_count += 1
+            
+            current_player_id = game.get_current_player(state)
+            current_mcts = player_mapping[current_player_id]
+            
+            # 如果是随机玩家
+            if current_mcts is None:
+                valid_moves = game.get_valid_moves(state)
+                action = np.random.choice(np.where(valid_moves > 0)[0])
+            else:
+                # 使用 MCTS (temp=0 贪心选择)
+                probs = current_mcts.get_action_prob(state, temp=0)
+                valid_moves = game.get_valid_moves(state)
+                probs = probs * valid_moves
+                
+                if np.sum(probs) > 0:
+                    action = np.argmax(probs)
+                else:
+                    action = np.random.choice(np.where(valid_moves > 0)[0])
+            
+            # 执行动作
+            state = game.get_next_state(state, action)
+        
+        # 获取结果
+        if game.is_terminal(state):
+            result = game.get_game_result(state, player1_actual_id)
+        else:
+            result = 0
+        
+        # 清理内存
+        del new_nnet, old_nnet, new_mcts, old_mcts, game
+        gc.collect()
+        if args.get('cuda', False):
+            torch.cuda.empty_cache()
+        
+        return result
+        
+    except Exception as e:
+        print(f"\n❌ Arena worker {game_idx} 出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0

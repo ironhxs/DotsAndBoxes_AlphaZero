@@ -51,10 +51,33 @@ def load_config_from_yaml(config_path='config/config.yaml'):
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
-    # 合并所有子配置
-    game_config = config['game']
-    model_config = config['model']
-    trainer_config = config['trainer']
+    # 手动加载子配置文件（支持 Hydra defaults 结构）
+    config_dir = os.path.dirname(config_path)
+    
+    # 从 defaults 中提取子配置名称，如果没有则使用默认值
+    defaults = config.get('defaults', [])
+    game_name = 'dots_and_boxes'
+    model_name = 'transformer'
+    trainer_name = 'alphazero'
+    
+    for item in defaults:
+        if isinstance(item, dict):
+            if 'game' in item:
+                game_name = item['game']
+            elif 'model' in item:
+                model_name = item['model']
+            elif 'trainer' in item:
+                trainer_name = item['trainer']
+    
+    # 加载子配置文件
+    with open(os.path.join(config_dir, 'game', f'{game_name}.yaml'), 'r', encoding='utf-8') as f:
+        game_config = yaml.safe_load(f)
+    
+    with open(os.path.join(config_dir, 'model', f'{model_name}.yaml'), 'r', encoding='utf-8') as f:
+        model_config = yaml.safe_load(f)
+    
+    with open(os.path.join(config_dir, 'trainer', f'{trainer_name}.yaml'), 'r', encoding='utf-8') as f:
+        trainer_config = yaml.safe_load(f)
     
     # 构建统一的 args 字典
     args = {
@@ -70,12 +93,13 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         'max_queue_length': config.get('replay_buffer_size', 200000),
         'num_iters_for_train_examples_history': trainer_config.get('num_iters_for_train_examples_history', 20),
         
-        # Arena 对战配置
-        'arena_compare': config.get('arena_games', 40),
-        'arena_interval': config.get('eval_interval', 2),
+        # Arena 配置
+        'arena_compare': config.get('arena_compare', 40),
         'arena_num_workers': config.get('arena_num_workers', 8),
         'arena_random_start': True,
         'arena_mcts_simulations': config.get('arena_mcts_simulations', trainer_config['num_simulations'] * 2),
+        'arena_mode': config.get('arena_mode', 'serial'),  # 添加 arena_mode 配置
+        'update_threshold': config.get('update_threshold', config.get('arena_threshold', 0.55)),
         
         # MCTS 参数
         'num_simulations': config.get('num_simulations', trainer_config['num_simulations']),
@@ -92,10 +116,13 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         
         # 并行优化参数
         'use_parallel': True,
+        'parallel_mode': config.get('parallel_mode', 'full'),
+        'use_multiprocess': config.get('use_multiprocess', True),
         'self_play_mode': 'batch',
         'num_workers': config.get('num_parallel_games', 8),
-        'mcts_batch_size': 32,
+        'mcts_batch_size': config.get('mcts_batch_size', 32),
         'parallel_games': config.get('num_parallel_games', 8),
+        'use_gpu_inference': config.get('use_gpu_inference', True),
         
         # GPU 配置
         'cuda': config.get('cuda', True) and torch.cuda.is_available(),
@@ -115,43 +142,24 @@ def load_config_from_yaml(config_path='config/config.yaml'):
 
 
 def main():
-    # GPU优化
-    torch.backends.cudnn.benchmark = True
-    os.environ['OMP_NUM_THREADS'] = '4'
+    """主函数"""
+    # 加载配置
+    args, config = load_config_from_yaml()
     
-    # 检查CUDA
-    if torch.cuda.is_available():
-        print(f"✓ CUDA 可用: {torch.cuda.get_device_name(0)}")
-        print(f"✓ 显存: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB\n")
+    # 设置设备
+    device = torch.device('cuda' if args['cuda'] and torch.cuda.is_available() else 'cpu')
+    args['device'] = device
+    
+    # 简洁的设备信息
+    if args['cuda'] and torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_properties(0).name
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"✓ GPU: {gpu_name} ({gpu_mem:.0f}GB)")
     else:
-        print("⚠️  警告: CUDA 不可用，将使用 CPU 训练\n")
+        print("⚠ 使用CPU训练")
     
-    # ========== 从配置文件加载所有参数 ==========
-    args, raw_config = load_config_from_yaml('config/config.yaml')
-    
-    print("="*60)
-    print("  AlphaZero 并行训练 - 配置驱动版")
-    print("="*60)
-    
-    # 初始化游戏
-    print(f"\n游戏: {args['num_rows']}x{args['num_cols']} Dots and Boxes")
-    
-    game = DotsAndBoxesGame(
-        num_rows=args['num_rows'],
-        num_cols=args['num_cols']
-    )
-    
-    obs_shape = game.get_observation(game.get_initial_state()).shape
-    print(f"动作空间: {game.get_action_size()}")
-    print(f"观察形状: {obs_shape}")
-    
-    # 初始化模型
-    device = torch.device('cuda' if args['cuda'] else 'cpu')
-    print(f"\n设备: {device}")
-    
-    if device.type == 'cuda':
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"显存: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+    # 初始化游戏和模型
+    game = DotsAndBoxesGame(**{'num_rows': args['num_rows'], 'num_cols': args['num_cols']})
     
     nnet = DotsAndBoxesNet(
         game=game,
@@ -163,25 +171,15 @@ def main():
     total_params = sum(p.numel() for p in nnet.parameters())
     print(f"模型参数: {total_params:,} ({total_params/1e6:.2f}M)")
     
-    # 打印训练配置
-    print("\n" + "=" * 80)
-    print("🧠 AlphaZero 并行训练系统 - 配置驱动版")
-    print("=" * 80)
-    print(f"训练迭代: {args['num_iterations']} 次")
-    print(f"每次迭代: {args['num_episodes']} 局自我对弈")
-    print(f"Arena验证: 每 {args['arena_interval']} 次迭代 ({args['arena_compare']} 局)")
-    print(f"更新阈值: {args['update_threshold']*100}% 胜率")
-    print(f"\n⚙️  自我对弈: {args['num_workers']} CPU进程 | MCTS={args['num_simulations']}次")
-    print(f"⚙️  Arena对战: {args['arena_num_workers']} CPU进程 | MCTS={args['arena_mcts_simulations']}次")
-    print(f"\n✨ 并行优化:")
-    print(f"  MCTS 批量大小: {args['mcts_batch_size']}")
-    print(f"  并行游戏数: {args['parallel_games']}")
-    print(f"  预期 GPU 利用率提升: 3-4倍")
-    print(f"\n神经网络: Transformer + ConvNeXt ({args['num_filters']}d × {args['num_res_blocks']} blocks)")
-    print(f"注意力机制: {args['num_heads']}-head Self-Attention")
-    print(f"训练规模: Batch={args['batch_size']}, Epochs={args['epochs']}, LR={args['lr']}")
-    print(f"GPU加速: {'✅ CUDA可用 + AMP' if args['cuda'] else '❌ 仅CPU'}")
-    print("=" * 80)
+    # 打印简洁的配置信息
+    print("\n" + "=" * 70)
+    print("🚀 AlphaZero 训练")
+    print("=" * 70)
+    print(f"迭代: {args['num_iterations']} | 自我对弈: {args['num_episodes']}局/次 | MCTS: {args['num_simulations']}次")
+    print(f"训练: Batch={args['batch_size']}, Epochs={args['epochs']}, LR={args['lr']}")
+    print(f"模型: {args['num_filters']}d×{args['num_res_blocks']}块 | 参数: {total_params/1e6:.1f}M")
+    print(f"并行: {args['num_workers']} workers | GPU批量: {args['mcts_batch_size']}")
+    print("=" * 70)
     
     # 检查点目录
     os.makedirs(args['checkpoint'], exist_ok=True)
@@ -190,8 +188,7 @@ def main():
     coach = ParallelCoach(game, nnet, args)
     
     # 开始训练
-    print("\n🚀 开始 AlphaZero 并行训练...")
-    print("   每次迭代包含: 并行自我对弈 → 批量训练 → Arena对战 → 模型筛选\n")
+    print("\n")
     
     try:
         coach.learn()

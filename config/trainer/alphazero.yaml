@@ -3,6 +3,22 @@
 # 训练器类型
 name: "alphazero"
 
+# 训练基础参数
+num_iterations: 1000        # AlphaZero 总迭代次数
+num_episodes: 100           # 每次迭代的自我对弈局数
+temp_threshold: 15          # 前N步使用温度采样
+update_threshold: 0.55      # 模型更新胜率阈值
+num_iters_for_train_examples_history: 20  # 保留的历史样本迭代数
+
+# MCTS 配置
+num_simulations: 800        # MCTS 模拟次数
+cpuct: 1.0                  # UCB 探索常数
+
+# 训练参数
+epochs: 10                  # 每次迭代的训练轮数
+batch_size: 512             # 批次大小
+lr: 0.001                   # 学习率
+
 # 优化器
 optimizer: "adam"           # adam, sgd, adamw
 momentum: 0.9               # SGD momentum
@@ -19,6 +35,7 @@ policy_loss_weight: 1.0     # 策略损失权重
 
 # 梯度裁剪
 grad_clip: 5.0              # 梯度裁剪阈值，None 表示不裁剪
+max_grad_norm: 5.0          # 最大梯度范数（别名）
 
 # 经验回放
 min_replay_size: 1000       # 开始训练前的最小样本数

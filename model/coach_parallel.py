@@ -3,16 +3,18 @@
 并行化 Coach - 提升训练效率
 
 主要改进：
-1. 多进程自我对弈
-2. 批量 MCTS 推理
-3. GPU 利用率优化
+1. 完全并行 GPU：每个进程独立 GPU 网络（最高 GPU 利用率）
+2. 多进程共享 GPU：主进程推理服务器（节省显存）
+3. 单进程并发：简单稳定（调试用）
 """
 
 import numpy as np
 import time
 from tqdm import tqdm
 
-from .mcts_batch import ParallelSelfPlay
+from .mcts_full_parallel_gpu import FullParallelGPUSelfPlay
+from .mcts_multiprocess_gpu import MultiProcessGPUSelfPlay
+from .mcts_concurrent_gpu import ConcurrentGames
 from .base_coach import BaseCoach
 
 
@@ -20,10 +22,10 @@ class ParallelCoach(BaseCoach):
     """
     并行化训练 Coach
     
-    优化策略：
-    1. 多进程自我对弈（CPU 并行）
-    2. 批量神经网络推理（GPU 批处理）
-    3. 异步数据收集
+    优化策略（按性能排序）：
+    1. 完全并行模式：每个 worker 独立 GPU 网络（GPU+显存充足时最快）
+    2. 共享 GPU 模式：多 worker + 主进程推理服务器（节省显存）
+    3. 单进程模式：单进程并发（简单稳定，调试用）
     
     继承自 BaseCoach，只需实现并行自我对弈逻辑
     """
@@ -31,8 +33,15 @@ class ParallelCoach(BaseCoach):
     def __init__(self, game, nnet, args):
         super().__init__(game, nnet, args)
         
-        # 并行自我对弈
-        self.parallel_self_play = ParallelSelfPlay(game, nnet, args)
+        # 选择并行模式
+        parallel_mode = args.get('parallel_mode', 'full')  # 'full', 'shared', 'single'
+        
+        if parallel_mode == 'full':
+            self.parallel_engine = FullParallelGPUSelfPlay(game, nnet, args)
+        elif parallel_mode == 'shared':
+            self.parallel_engine = MultiProcessGPUSelfPlay(game, nnet, args)
+        else:
+            self.parallel_engine = ConcurrentGames(game, nnet, args)
     
     def execute_episode(self):
         """
@@ -47,27 +56,23 @@ class ParallelCoach(BaseCoach):
     
     def collect_self_play_data(self):
         """
-        批量执行多局游戏（并行）
-        
-        重写基类方法以实现并行版本
+        并行执行多局游戏
         
         Returns:
             训练样本列表
         """
-        print(f'  并行自我对弈：{self.args["num_episodes"]} 局')
-        print(f'  并行进程数：{self.args.get("num_workers", 8)}')
-        print(f'  MCTS 批量大小：{self.args.get("mcts_batch_size", 32)}')
-        
         start_time = time.time()
         
-        iteration_train_examples = self.parallel_self_play.execute_episodes_parallel(
+        iteration_train_examples = self.parallel_engine.execute_episodes_parallel(
             self.args['num_episodes']
         )
         
         elapsed_time = time.time() - start_time
+        num_games = self.args["num_episodes"]
+        num_samples = len(iteration_train_examples)
+        avg_steps = num_samples / num_games if num_games > 0 else 0
         
-        print(f'  ✓ 并行自我对弈完成')
-        print(f'    耗时: {elapsed_time:.2f}s')
-        print(f'    速度: {len(iteration_train_examples) / elapsed_time:.1f} 样本/秒')
+        print(f'  ✓ 完成: {elapsed_time:.1f}s, {num_games / elapsed_time:.2f} 局/秒')
+        print(f'  ✓ 样本: {num_samples} 个 ({num_games}局 × 平均{avg_steps:.1f}步)')
         
         return iteration_train_examples

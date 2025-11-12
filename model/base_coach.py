@@ -17,6 +17,7 @@ from tqdm import tqdm
 from collections import deque
 from abc import ABC, abstractmethod
 import copy
+from torch.utils.tensorboard import SummaryWriter
 
 
 class BaseCoach(ABC):
@@ -40,13 +41,23 @@ class BaseCoach(ABC):
         self.nnet = nnet  # 当前模型 (current_net)
         self.args = args
         
-        # 训练历史
-        self.train_examples_history = deque(
-            maxlen=args.get('num_iters_for_train_examples_history', 20)
-        )
+        # 训练历史 - 使用 replay_buffer_size 或默认保留 20 次迭代
+        # 假设每次迭代约 18000 样本，根据 replay_buffer_size 计算保留次数
+        samples_per_iter = args.get('num_self_play_games', 300) * 60  # 300局×60步
+        max_iters = max(1, args.get('replay_buffer_size', 360000) // samples_per_iter)
+        
+        self.train_examples_history = deque(maxlen=max_iters)
+        print(f"✓ 经验池配置: 保留最近 {max_iters} 次迭代（约 {max_iters * samples_per_iter:,} 样本）")
         
         # 前一个模型（用于 Arena 对战）
         self.previous_nnet = None
+        
+        # TensorBoard
+        self.writer = None
+        if args.get('tensorboard', False):  # 使用 'tensorboard' 而不是 'use_tensorboard'
+            log_dir = args.get('log_dir', 'results/logs')
+            self.writer = SummaryWriter(log_dir=log_dir)
+            print(f"✓ TensorBoard 日志目录: {log_dir}")
         
         # 初始化时，将当前模型作为 previous_net
         self._initialize_previous_net()
@@ -94,15 +105,16 @@ class BaseCoach(ABC):
         5. 保存检查点
         """
         for iteration in range(1, self.args['num_iterations'] + 1):
-            print(f'\n{"=" * 60}')
+            # 设置当前迭代号（用于 TensorBoard 记录）
+            self._current_iteration = iteration
+            
+            print(f'\n{"=" * 70}')
             print(f'迭代 {iteration}/{self.args["num_iterations"]}')
-            print(f'{"=" * 60}')
+            print(f'{"=" * 70}')
             
             # ========== 1. 自我对弈 ==========
-            print(f'\n[1/4] 自我对弈...')
+            print(f'[1/3] 自我对弈...')
             iteration_train_examples = self.collect_self_play_data()
-            
-            print(f'✓ 生成 {len(iteration_train_examples)} 个训练样本')
             
             # 添加到历史
             self.train_examples_history.append(iteration_train_examples)
@@ -112,55 +124,54 @@ class BaseCoach(ABC):
             for examples in self.train_examples_history:
                 train_examples.extend(examples)
             
-            print(f'✓ 训练集大小: {len(train_examples)} 样本')
+            print(f'  ✓ 训练集: {len(train_examples)} 样本')
             
-            # ========== 2. 保存训练前的模型 ==========
-            print(f'\n[2/4] 保存当前模型...')
-            self.save_checkpoint(filename='temp.pth')
+            # TensorBoard 记录数据集大小
+            if self.writer is not None:
+                self.writer.add_scalar('Data/IterationSamples', len(iteration_train_examples), iteration)
+                self.writer.add_scalar('Data/TotalSamples', len(train_examples), iteration)
             
-            # ========== 3. 训练神经网络 ==========
-            print(f'\n[3/4] 训练神经网络...')
+            # ========== 2. 训练神经网络 ==========
+            print(f'[2/3] 训练神经网络...')
             try:
                 train_stats = self.train(train_examples)
-                print(f'✓ 训练完成')
-                if train_stats:
-                    print(f'  平均策略损失: {np.mean(train_stats["pi_losses"]):.4f}')
-                    print(f'  平均价值损失: {np.mean(train_stats["v_losses"]):.4f}')
+                
+                # 关键：训练完成后，将主进程的模型移到 CPU，释放 GPU 显存
+                if self.args.get('cuda', False):
+                    self.nnet.cpu()
+                    import gc
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    print(f'  ✓ 已将模型移至 CPU，释放 GPU 显存')
             except Exception as e:
-                print(f'❌ 训练出错: {e}')
+                print(f'  ❌ 训练出错: {e}')
                 import traceback
                 traceback.print_exc()
-                # 恢复到训练前的模型
-                self._load_temp_checkpoint()
                 continue
             
-            # ========== 4. Arena 对战 ==========
+            # ========== 3. Arena 对战 ==========
             arena_interval = self.args.get('arena_interval', 1)
             
             if iteration % arena_interval == 0:
-                print(f'\n[4/4] Arena 对战验证...')
+                print(f'[3/3] Arena 对战...')
                 try:
                     should_accept = self._arena_compare()
                     
                     if should_accept:
-                        print('✅ 新模型表现更好，更新 previous_net')
+                        print('  ✅ 接受新模型')
                         self._accept_new_model()
-                        
-                        # 保存最佳模型
                         self.save_checkpoint(filename=f'best_{iteration}.pth')
                     else:
-                        print('❌ 新模型表现不佳，保持 previous_net，回退 current_net')
+                        print('  ❌ 拒绝新模型')
                         self._reject_new_model()
                 
                 except Exception as e:
-                    print(f'❌ Arena 对战出错: {e}')
+                    print(f'  ❌ Arena 出错: {e}')
                     import traceback
                     traceback.print_exc()
-                    # 出错时保守策略：不接受新模型
                     self._reject_new_model()
             else:
-                print(f'\n[4/4] 跳过 Arena 验证 (每 {arena_interval} 次迭代验证一次)')
-                # 不验证时，保守策略：接受新模型
+                print(f'[3/3] 跳过 Arena (每 {arena_interval} 次)')
                 self._accept_new_model()
             
             # ========== 5. 保存检查点 ==========
@@ -168,10 +179,6 @@ class BaseCoach(ABC):
                 self.save_checkpoint(filename=f'checkpoint_{iteration}.pth')
             
             self.save_checkpoint(filename='latest.pth')
-            
-            print(f'\n{"=" * 60}')
-            print(f'迭代 {iteration} 完成')
-            print(f'{"=" * 60}\n')
     
     def _arena_compare(self):
         """
@@ -190,6 +197,11 @@ class BaseCoach(ABC):
         )
         
         print(f'  Arena 胜率: {win_rate * 100:.1f}%')
+        
+        # TensorBoard 记录 Arena 结果
+        if self.writer is not None and hasattr(self, '_current_iteration'):
+            self.writer.add_scalar('Arena/WinRate', win_rate, self._current_iteration)
+            self.writer.add_scalar('Arena/Accepted', 1 if should_accept else 0, self._current_iteration)
         
         return should_accept
     
@@ -221,10 +233,14 @@ class BaseCoach(ABC):
             dict: 训练统计信息
         """
         # 创建优化器
+        weight_decay = self.args.get('weight_decay', 1e-4)
+        if isinstance(weight_decay, str):
+            weight_decay = float(weight_decay)
+        
         optimizer = optim.Adam(
             self.nnet.parameters(),
             lr=self.args['lr'],
-            weight_decay=self.args.get('weight_decay', 1e-4)
+            weight_decay=weight_decay
         )
         
         # 学习率调度器
@@ -238,27 +254,40 @@ class BaseCoach(ABC):
         use_amp = self.args.get('use_amp', False) and self.args.get('cuda', False)
         scaler = amp.GradScaler(enabled=use_amp) if use_amp else None
         
+        # 确保模型在正确的设备上
+        if self.args.get('cuda', False):
+            self.nnet.cuda()
+        
         self.nnet.train()
         
         pi_losses = []
         v_losses = []
         total_losses = []
         
+        # 使用 epoch 作为进度（而不是 batch）
+        total_epochs = self.args['epochs']
+        
+        # 创建进度条 - epoch 级别，格式: Train: 48%|███| 145/300 [01:41<01:46, Loss=4.5568]
+        progress_bar = tqdm(
+            total=total_epochs,
+            desc='  Train',
+            bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {postfix}]'
+        )
+        
+        # 计算每个 epoch 的批次数
+        num_batches_per_epoch = max(1, len(examples) // self.args['batch_size'])
+        
         for epoch in range(self.args['epochs']):
             current_lr = optimizer.param_groups[0]['lr']
-            print(f'Epoch {epoch + 1}/{self.args["epochs"]} - LR: {current_lr:.6f}')
             
             # 打乱数据
             np.random.shuffle(examples)
-            num_batches = max(1, len(examples) // self.args['batch_size'])
             
             epoch_pi_loss = 0
             epoch_v_loss = 0
             epoch_total_loss = 0
             
-            batch_iterator = tqdm(range(num_batches), desc='Training')
-            
-            for batch_idx in batch_iterator:
+            for batch_idx in range(num_batches_per_epoch):
                 try:
                     # 采样 batch
                     sample_ids = np.random.randint(len(examples), size=self.args['batch_size'])
@@ -303,6 +332,9 @@ class BaseCoach(ABC):
                         # 优化器步进
                         scaler.step(optimizer)
                         scaler.update()
+                        
+                        # 立即删除中间变量释放显存
+                        del out_pi, out_v, boards, target_pis, target_vs
                     else:
                         # 标准训练
                         out_pi, out_v = self.nnet(boards)
@@ -327,18 +359,14 @@ class BaseCoach(ABC):
                         
                         # 优化器步进
                         optimizer.step()
+                        
+                        # 立即删除中间变量释放显存
+                        del out_pi, out_v, boards, target_pis, target_vs
                     
                     # 记录损失
                     epoch_pi_loss += l_pi.item()
                     epoch_v_loss += l_v.item()
                     epoch_total_loss += total_loss.item()
-                    
-                    # 更新进度条
-                    batch_iterator.set_postfix({
-                        'pi_loss': f'{l_pi.item():.4f}',
-                        'v_loss': f'{l_v.item():.4f}',
-                        'total': f'{total_loss.item():.4f}'
-                    })
                 
                 except Exception as e:
                     print(f'\n❌ 训练批次 {batch_idx} 出错: {e}')
@@ -349,20 +377,54 @@ class BaseCoach(ABC):
             # 学习率调度
             scheduler.step()
             
+            # 计算 epoch 平均损失
+            avg_total_loss = epoch_total_loss / num_batches_per_epoch if num_batches_per_epoch > 0 else 0
+            
+            # 更新进度条 - 每个 epoch 更新一次
+            progress_bar.update(1)
+            progress_bar.set_postfix_str(f'Loss={avg_total_loss:.4f}')
+            
             # 记录 epoch 平均损失
-            if num_batches > 0:
-                avg_pi_loss = epoch_pi_loss / num_batches
-                avg_v_loss = epoch_v_loss / num_batches
-                avg_total_loss = epoch_total_loss / num_batches
+            if num_batches_per_epoch > 0:
+                avg_pi_loss = epoch_pi_loss / num_batches_per_epoch
+                avg_v_loss = epoch_v_loss / num_batches_per_epoch
+                avg_total_loss = epoch_total_loss / num_batches_per_epoch
                 
                 pi_losses.append(avg_pi_loss)
                 v_losses.append(avg_v_loss)
                 total_losses.append(avg_total_loss)
                 
-                print(f'Epoch {epoch + 1} 平均损失 - '
-                      f'Policy: {avg_pi_loss:.4f}, '
-                      f'Value: {avg_v_loss:.4f}, '
-                      f'Total: {avg_total_loss:.4f}')
+                # TensorBoard 记录
+                if self.writer is not None:
+                    global_step = epoch + 1  # 需要从 learn() 传入 iteration
+                    if hasattr(self, '_current_iteration'):
+                        global_step = self._current_iteration * self.args['epochs'] + epoch + 1
+                    self.writer.add_scalar('Loss/Policy', avg_pi_loss, global_step)
+                    self.writer.add_scalar('Loss/Value', avg_v_loss, global_step)
+                    self.writer.add_scalar('Loss/Total', avg_total_loss, global_step)
+                    self.writer.add_scalar('Training/LearningRate', current_lr, global_step)
+        
+        progress_bar.close()
+        
+        # 打印最终统计
+        if len(total_losses) > 0:
+            print(f'  ✓ Loss: {total_losses[-1]:.4f} (pi={pi_losses[-1]:.4f}, v={v_losses[-1]:.4f})')
+        
+        # 清理显存 - 删除所有训练相关的变量
+        del examples  # 只删除 examples，不删除传入的 train_examples
+        if self.args.get('cuda', False):
+            # 清理优化器状态
+            del optimizer, scheduler
+            if scaler is not None:
+                del scaler
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+            # 清空 CUDA 缓存
+            torch.cuda.empty_cache()
+        
+        # 设置为评估模式
+        self.nnet.eval()
         
         # 返回训练统计
         return {
@@ -410,3 +472,8 @@ class BaseCoach(ABC):
         else:
             print(f'⚠️  检查点不存在: {filepath}')
             return False
+    
+    def __del__(self):
+        """析构函数：关闭 TensorBoard writer"""
+        if hasattr(self, 'writer') and self.writer is not None:
+            self.writer.close()
