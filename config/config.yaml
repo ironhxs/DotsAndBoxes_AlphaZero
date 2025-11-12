@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # AlphaZero 点格棋主配置文件
-# 采用 Hydra 配置管理（与 GMD 一致）
+# 采用 Hydra 配置管理
 
 defaults:
   - _self_
@@ -18,8 +18,8 @@ seed: 42
 
 # 训练配置
 num_iterations: 1000        # AlphaZero 总迭代次数
-checkpoint_interval: 10     # 每隔多少次迭代保存模型
-eval_interval: 1            # 每隔多少次迭代评估模型
+checkpoint_interval: 30     # 每隔多少次迭代保存模型
+eval_interval: 20            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
 
 # 自我对弈配置
 num_self_play_games: 300    # 每次迭代的自我对弈局数（增加工作量）
@@ -27,7 +27,7 @@ num_parallel_games: 25      # 并行对弈的游戏数（12→16，更多worker�
 temperature_threshold: 15   # 前N步使用温度采样，之后贪心
 
 # MCTS 配置
-num_simulations: 10        # MCTS 模拟次数（100→400，增加计算量）
+num_simulations: 200        # MCTS 模拟次数（100→400，增加计算量）
 cpuct: 1.0                  # UCB 探索常数
 dirichlet_alpha: 0.3        # Dirichlet 噪声参数
 dirichlet_epsilon: 0.25     # 添加噪声的比例
@@ -37,7 +37,7 @@ batch_size: 7200            # 增大 batch（512→1024，充分利用显存）
 learning_rate: 0.001
 weight_decay: 1e-4
 train_epochs: 300            # 增加训练轮数 (1→10)
-replay_buffer_size: 40000  # 增大经验池 (20000→200000)
+replay_buffer_size: 360000  # 经验池大小 (约保留 20 次迭代，300局×60步×20≈360000样本)
 
 # 并行优化参数
 use_parallel: true
@@ -54,19 +54,15 @@ save_to: "results/dots_and_boxes"
 checkname: "alphazero_6x6"
 
 # 日志配置
-log_interval: 10            # 每隔多少局游戏记录一次
+log_interval: 20            # 每隔多少局游戏记录一次
 tensorboard: true
-
-# 评估配置
-num_eval_games: 50          # 评估时的对局数
-eval_against: "random"      # random, mcts_baseline, previous
 
 # Arena 配置（模型对战）
 arena_mode: "gpu_parallel"  # gpu_parallel（GPU多进程，最快）, serial（串行）
 arena_compare: 20           # Arena 对战局数
 arena_threshold: 0.55       # 新模型胜率阈值（超过才替换旧模型）
-arena_num_workers: 10       # Arena 并行进程数
-arena_mcts_simulations: 10 # Arena MCTS 模拟次数（高精度评估）
+arena_num_workers: 20       # Arena 并行进程数
+arena_mcts_simulations: 100 # Arena MCTS 模拟次数（高精度评估）
 update_threshold: 0.55      # 更新阈值（兼容旧参数名）
 
 # 可视化

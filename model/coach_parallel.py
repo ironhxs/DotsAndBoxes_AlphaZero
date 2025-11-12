@@ -54,9 +54,12 @@ class ParallelCoach(BaseCoach):
             "而不是单局的 execute_episode()"
         )
     
-    def collect_self_play_data(self):
+    def collect_self_play_data(self, iteration):
         """
         并行执行多局游戏
+        
+        Args:
+            iteration: 当前迭代轮次（用于进度条显示）
         
         Returns:
             训练样本列表
@@ -64,7 +67,9 @@ class ParallelCoach(BaseCoach):
         start_time = time.time()
         
         iteration_train_examples = self.parallel_engine.execute_episodes_parallel(
-            self.args['num_episodes']
+            self.args['num_episodes'],
+            current_iteration=iteration,
+            total_iterations=self.args['num_iterations']
         )
         
         elapsed_time = time.time() - start_time
@@ -72,7 +77,7 @@ class ParallelCoach(BaseCoach):
         num_samples = len(iteration_train_examples)
         avg_steps = num_samples / num_games if num_games > 0 else 0
         
-        print(f'  ✓ 完成: {elapsed_time:.1f}s, {num_games / elapsed_time:.2f} 局/秒')
-        print(f'  ✓ 样本: {num_samples} 个 ({num_games}局 × 平均{avg_steps:.1f}步)')
+        # print(f'  ✓ 完成: {elapsed_time:.1f}s, {num_games / elapsed_time:.2f} 局/秒')
+        # print(f'  ✓ 样本: {num_samples} 个 ({num_games}局 × 平均{avg_steps:.1f}步)')
         
         return iteration_train_examples

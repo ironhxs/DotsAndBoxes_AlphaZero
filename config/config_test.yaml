@@ -48,10 +48,6 @@ checkname: "alphazero_test"
 log_interval: 5             # (10→5)
 tensorboard: true
 
-# 评估配置 - 减少评估局数
-num_eval_games: 10          # (50→10)
-eval_against: "random"
-
 # Arena 配置 - 简化对战
 arena_mode: "gpu_thread"
 arena_games: 20             # (100→20)

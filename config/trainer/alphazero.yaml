@@ -8,7 +8,7 @@ num_iterations: 1000        # AlphaZero 总迭代次数
 num_episodes: 100           # 每次迭代的自我对弈局数
 temp_threshold: 15          # 前N步使用温度采样
 update_threshold: 0.55      # 模型更新胜率阈值
-num_iters_for_train_examples_history: 20  # 保留的历史样本迭代数
+# num_iters_for_train_examples_history: 20  # 已废弃,使用 config.yaml 中的 replay_buffer_size
 
 # MCTS 配置
 num_simulations: 800        # MCTS 模拟次数

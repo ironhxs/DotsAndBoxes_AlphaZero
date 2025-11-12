@@ -88,6 +88,8 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         # 训练基础参数
         'num_iterations': config.get('num_iterations', trainer_config['num_iterations']),
         'num_episodes': config.get('num_self_play_games', trainer_config['num_episodes']),
+        'num_self_play_games': config.get('num_self_play_games', trainer_config['num_episodes']),  # 添加这个!
+        'replay_buffer_size': config.get('replay_buffer_size', 360000),  # 添加这个!
         'temp_threshold': config.get('temperature_threshold', trainer_config['temp_threshold']),
         'update_threshold': trainer_config.get('update_threshold', 0.55),
         'max_queue_length': config.get('replay_buffer_size', 200000),
@@ -99,6 +101,7 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         'arena_random_start': True,
         'arena_mcts_simulations': config.get('arena_mcts_simulations', trainer_config['num_simulations'] * 2),
         'arena_mode': config.get('arena_mode', 'serial'),  # 添加 arena_mode 配置
+        'arena_interval': config.get('eval_interval', 1),  # 使用 eval_interval 控制 Arena 频率
         'update_threshold': config.get('update_threshold', config.get('arena_threshold', 0.55)),
         
         # MCTS 参数
@@ -169,17 +172,9 @@ def main():
     ).to(device)
     
     total_params = sum(p.numel() for p in nnet.parameters())
-    print(f"模型参数: {total_params:,} ({total_params/1e6:.2f}M)")
     
-    # 打印简洁的配置信息
-    print("\n" + "=" * 70)
-    print("🚀 AlphaZero 训练")
-    print("=" * 70)
-    print(f"迭代: {args['num_iterations']} | 自我对弈: {args['num_episodes']}局/次 | MCTS: {args['num_simulations']}次")
-    print(f"训练: Batch={args['batch_size']}, Epochs={args['epochs']}, LR={args['lr']}")
-    print(f"模型: {args['num_filters']}d×{args['num_res_blocks']}块 | 参数: {total_params/1e6:.1f}M")
-    print(f"并行: {args['num_workers']} workers | GPU批量: {args['mcts_batch_size']}")
-    print("=" * 70)
+    # 简洁的配置信息（单行）
+    print(f"模型: {total_params/1e6:.1f}M 参数 | {args['num_filters']}d×{args['num_res_blocks']}块 | 迭代 {args['num_iterations']} | 并行 {args['num_workers']} workers")
     
     # 检查点目录
     os.makedirs(args['checkpoint'], exist_ok=True)
@@ -188,8 +183,6 @@ def main():
     coach = ParallelCoach(game, nnet, args)
     
     # 开始训练
-    print("\n")
-    
     try:
         coach.learn()
     except KeyboardInterrupt:
@@ -203,11 +196,7 @@ def main():
         coach.save_checkpoint(filename='error.pth')
         print(f"✓ 模型已保存到 {args['checkpoint']}/error.pth")
     
-    print("\n" + "=" * 80)
-    print("🎉 训练完成!")
-    print("=" * 80)
-    print(f"最佳模型保存在: {args['checkpoint']}/best_*.pth")
-    print(f"最新模型保存在: {args['checkpoint']}/latest.pth")
+    print("\n训练完成! 模型: {args['checkpoint']}/best_*.pth")
     print("\n使用以下命令验证模型:")
     print(f"  python cli/play_ultimate.py --checkpoint {args['checkpoint']}/best_*.pth")
     print(f"  python cli/evaluate_model.py --checkpoint {args['checkpoint']}/best_*.pth")

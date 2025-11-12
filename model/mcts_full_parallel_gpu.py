@@ -319,8 +319,15 @@ class FullParallelGPUSelfPlay:
             'num_heads': args['num_heads']
         }
     
-    def execute_episodes_parallel(self, num_episodes):
-        """完全并行执行游戏（每个进程独立 GPU）"""
+    def execute_episodes_parallel(self, num_episodes, current_iteration=None, total_iterations=None):
+        """
+        完全并行执行游戏（每个进程独立 GPU）
+        
+        Args:
+            num_episodes: 对弈局数
+            current_iteration: 当前迭代轮次（可选，用于进度条显示）
+            total_iterations: 总迭代轮次（可选，用于进度条显示）
+        """
         num_workers = self.args.get('num_workers', 8)
         
         # 关键：同步最新训练的模型权重到共享内存
@@ -355,7 +362,13 @@ class FullParallelGPUSelfPlay:
             results_async.append(result)
         
         # 监控进度
-        pbar = tqdm(total=num_episodes, desc='  自我对弈', unit='局')
+        if current_iteration and total_iterations:
+            # 固定宽度30字符，确保与Train和Arena对齐
+            epoch_str = f'Epoch {current_iteration}/{total_iterations}'
+            desc = f'({epoch_str:<15})SelfPlay'
+        else:
+            desc = 'SelfPlay'
+        pbar = tqdm(total=num_episodes, desc=desc, unit='局')
         
         try:
             while True:

@@ -77,7 +77,7 @@ class Arena:
 
         return 0
     
-    def play_games(self, num_games, num_workers=1, random_start=False):
+    def play_games(self, num_games, num_workers=1, random_start=False, current_iteration=None, total_iterations=None):
         """
         进行多局对战（支持并行）
         
@@ -85,6 +85,8 @@ class Arena:
             num_games: 对战局数
             num_workers: 并行进程数（1=串行，>1=并行）
             random_start: 是否随机先手（True=随机，False=交替）
+            current_iteration: 当前迭代轮次（可选，用于进度条显示）
+            total_iterations: 总迭代轮次（可选，用于进度条显示）
             
         Returns:
             (player1_wins, player2_wins, draws)
@@ -93,12 +95,12 @@ class Arena:
         
         if num_workers <= 1:
             # 串行执行
-            return self._play_games_serial(num_games, random_start)
+            return self._play_games_serial(num_games, random_start, current_iteration, total_iterations)
         else:
             # 并行执行
-            return self._play_games_parallel(num_games, num_workers, random_start)
+            return self._play_games_parallel(num_games, num_workers, random_start, current_iteration, total_iterations)
     
-    def _play_games_serial(self, num_games, random_start=False):
+    def _play_games_serial(self, num_games, random_start=False, current_iteration=None, total_iterations=None):
         """串行执行多局游戏"""
         import random
         
@@ -106,7 +108,10 @@ class Arena:
         player2_wins = 0
         draws = 0
         
-        for i in tqdm(range(num_games), desc="Arena对战"):
+        # 固定宽度30字符，确保与SelfPlay和Train对齐
+        desc = f'{"Arena":<30}'
+        
+        for i in tqdm(range(num_games), desc=desc):
             # 决定先手
             if random_start:
                 player1_starts = random.random() < 0.5
@@ -124,7 +129,7 @@ class Arena:
         
         return player1_wins, player2_wins, draws
     
-    def _play_games_parallel(self, num_games, num_workers, random_start=False):
+    def _play_games_parallel(self, num_games, num_workers, random_start=False, current_iteration=None, total_iterations=None):
         """并行执行多局游戏"""
         import multiprocessing as mp
         import random
@@ -141,12 +146,16 @@ class Arena:
         # 创建任务列表
         tasks = [(i, starts[i]) for i in range(num_games)]
         
+        # 固定宽度30字符，确保与SelfPlay和Train对齐
+        desc = f"Arena({num_workers}进程)"
+        desc = f'{desc:<30}'
+        
         # 并行执行
         with mp_context.Pool(num_workers) as pool:
             results = list(tqdm(
                 pool.imap(self._play_game_worker, tasks),
                 total=num_games,
-                desc=f"Arena对战({num_workers}进程)"
+                desc=desc
             ))
         
         # 统计结果
@@ -211,7 +220,7 @@ class RandomPlayer:
         return np.random.choice(valid_actions)
 
 
-def compare_models(game, new_nnet, old_nnet, args):
+def compare_models(game, new_nnet, old_nnet, args, current_iteration=None, total_iterations=None):
     """
     比较新旧模型（支持GPU并行）
     
@@ -220,6 +229,8 @@ def compare_models(game, new_nnet, old_nnet, args):
         new_nnet: 新模型
         old_nnet: 旧模型 (如果为None，则与随机玩家比较)
         args: 配置参数
+        current_iteration: 当前迭代轮次（可选，用于进度条显示）
+        total_iterations: 总迭代轮次（可选，用于进度条显示）
         
     Returns:
         (win_rate, should_accept): 胜率和是否接受新模型
@@ -227,19 +238,19 @@ def compare_models(game, new_nnet, old_nnet, args):
     arena_mode = args.get('arena_mode', 'serial')
     cuda_enabled = args.get('cuda', False)
     
-    print(f"  Arena 模式: {arena_mode}, CUDA: {cuda_enabled}")
+    # Arena 模式信息已在 learn() 开始时输出，此处不重复
     
     if arena_mode == 'gpu_parallel' and cuda_enabled:
         # GPU 多进程并行模式
-        return _compare_models_gpu_parallel(game, new_nnet, old_nnet, args)
+        return _compare_models_gpu_parallel(game, new_nnet, old_nnet, args, current_iteration, total_iterations)
     else:
         # 串行模式（原始实现）
         if arena_mode == 'gpu_parallel' and not cuda_enabled:
             print(f"  ⚠️  GPU并行模式需要启用CUDA，降级到串行模式")
-        return _compare_models_serial(game, new_nnet, old_nnet, args)
+        return _compare_models_serial(game, new_nnet, old_nnet, args, current_iteration, total_iterations)
 
 
-def _compare_models_serial(game, new_nnet, old_nnet, args):
+def _compare_models_serial(game, new_nnet, old_nnet, args, current_iteration=None, total_iterations=None):
     """串行比较模型（原始实现）"""
     # 创建MCTS参数 (Arena用更多模拟次数)
     arena_args = args.copy()
@@ -257,10 +268,13 @@ def _compare_models_serial(game, new_nnet, old_nnet, args):
     # 创建Arena
     arena = Arena(game, new_player, old_player, arena_args)
     
-    # 进行对战 - 使用配置的对战局数（串行模式）
+    # 进行对战
     num_games = args.get('arena_compare', 40)
-    print(f"  ⚙️  串行模式: {num_games} 局对战")
-    new_wins, old_wins, draws = arena.play_games(num_games, num_workers=1)
+    new_wins, old_wins, draws = arena.play_games(
+        num_games, num_workers=1, 
+        current_iteration=current_iteration, 
+        total_iterations=total_iterations
+    )
     
     # 计算胜率
     total_decisive = new_wins + old_wins
@@ -273,20 +287,14 @@ def _compare_models_serial(game, new_nnet, old_nnet, args):
     threshold = args.get('update_threshold', 0.55)
     should_accept = win_rate >= threshold
     
-    # 打印结果
-    print(f"\n{'='*60}")
-    print(f"Arena对战结果:")
-    print(f"  新模型: {new_wins}胜 ({win_rate*100:.1f}%)")
-    print(f"  旧模型: {old_wins}胜")
-    print(f"  平局: {draws}")
-    print(f"  阈值: {threshold*100:.1f}%")
-    print(f"  决定: {'✅ 接受新模型' if should_accept else '❌ 拒绝新模型，保留旧模型'}")
-    print(f"{'='*60}\n")
+    # 简洁输出结果（一行）
+    decision = '✅ 接受' if should_accept else '❌ 拒绝'
+    print(f"Arena: 新模型 {new_wins}胜 vs 旧模型 {old_wins}胜 (平{draws}局) | 胜率 {win_rate*100:.1f}% | {decision}")
     
     return win_rate, should_accept
 
 
-def _compare_models_gpu_parallel(game, new_nnet, old_nnet, args):
+def _compare_models_gpu_parallel(game, new_nnet, old_nnet, args, current_iteration=None, total_iterations=None):
     """GPU 多进程并行比较模型"""
     import multiprocessing as mp
     from multiprocessing import Manager
@@ -307,14 +315,16 @@ def _compare_models_gpu_parallel(game, new_nnet, old_nnet, args):
     # 创建任务列表
     tasks = [(i, starts[i], new_state_dict, old_state_dict, args) for i in range(num_games)]
     
-    # 并行执行
-    print(f"  🚀 GPU 并行模式: {num_workers} 个进程，{num_games} 局对战")
+    # 固定宽度30字符，确保与SelfPlay和Train对齐
+    desc = f"Arena(GPU×{num_workers})"
+    desc = f'{desc:<22}'
     
+    # 并行执行 (简洁输出: 使用 tqdm 进度条显示进度)
     with mp.Pool(num_workers) as pool:
         results = list(tqdm(
             pool.imap(_arena_worker_gpu, tasks),
             total=num_games,
-            desc=f"  Arena对战(GPU×{num_workers})"
+            desc=desc
         ))
     
     # 统计结果
@@ -333,15 +343,9 @@ def _compare_models_gpu_parallel(game, new_nnet, old_nnet, args):
     threshold = args.get('update_threshold', 0.55)
     should_accept = win_rate >= threshold
     
-    # 打印结果
-    print(f"\n{'='*60}")
-    print(f"Arena对战结果 (GPU并行):")
-    print(f"  新模型: {new_wins}胜 ({win_rate*100:.1f}%)")
-    print(f"  旧模型: {old_wins}胜")
-    print(f"  平局: {draws}")
-    print(f"  阈值: {threshold*100:.1f}%")
-    print(f"  决定: {'✅ 接受新模型' if should_accept else '❌ 拒绝新模型，保留旧模型'}")
-    print(f"{'='*60}\n")
+    # 简洁输出结果（一行）
+    decision = '✅ 接受' if should_accept else '❌ 拒绝'
+    print(f"Arena: 新模型 {new_wins}胜 vs 旧模型 {old_wins}胜 (平{draws}局) | 胜率 {win_rate*100:.1f}% | {decision}")
     
     return win_rate, should_accept
 
@@ -364,14 +368,25 @@ def _arena_worker_gpu(task):
         game = DotsAndBoxesGame()
         
         # 创建神经网络（根据配置选择架构）
-        if args.get('model_type') == 'transformer':
-            from .model_transformer import DotsAndBoxesTransformer
-            new_nnet = DotsAndBoxesTransformer(game, args)
-            old_nnet = DotsAndBoxesTransformer(game, args) if old_state_dict else None
+        # 注意：使用正确的类名
+        from .model_transformer import DotsAndBoxesTransformer
+        from .model import DotsAndBoxesNet
+        
+        # 检测使用哪个模型（根据state_dict的键判断）
+        is_transformer = 'transformer_blocks.0.norm1.weight' in new_state_dict
+        
+        if is_transformer:
+            new_nnet = DotsAndBoxesTransformer(game, args.get('num_filters', 256), 
+                                               args.get('num_res_blocks', 12), 
+                                               args.get('num_heads', 8))
+            old_nnet = DotsAndBoxesTransformer(game, args.get('num_filters', 256), 
+                                               args.get('num_res_blocks', 12), 
+                                               args.get('num_heads', 8)) if old_state_dict else None
         else:
-            from .model import DotsAndBoxesResNet
-            new_nnet = DotsAndBoxesResNet(game, args)
-            old_nnet = DotsAndBoxesResNet(game, args) if old_state_dict else None
+            new_nnet = DotsAndBoxesNet(game, args.get('num_filters', 128), 
+                                       args.get('num_res_blocks', 10))
+            old_nnet = DotsAndBoxesNet(game, args.get('num_filters', 128), 
+                                       args.get('num_res_blocks', 10)) if old_state_dict else None
         
         # 加载模型权重
         new_nnet.load_state_dict(new_state_dict, strict=False)
