@@ -1,0 +1,16 @@
+name: alphazero
+channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch==2.5.1
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - hydra-core
+  - tensorboard
+  - tqdm
+  - pyyaml
+prefix: /root/miniconda3/envs/alphazero
