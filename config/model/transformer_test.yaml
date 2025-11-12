@@ -1,0 +1,41 @@
+# Transformer 测试配置（4060 Laptop 快速验证）
+
+# 模型类型
+name: "transformer"
+
+# 网络结构 - 大幅简化
+num_blocks: 4               # 总块数 (12→4)
+num_filters: 64             # 特征维度 (256→64)
+num_heads: 4                # 多头注意力头数 (8→4)
+
+# ConvNeXt 块配置
+conv_kernel_size: 3         # 深度卷积核 (7→3)
+mlp_ratio: 2.0              # MLP扩展比例 (4.0→2.0)
+
+# Transformer 块配置
+attention_dropout: 0.1
+mlp_dropout: 0.2            # (0.3→0.2)
+
+# 策略头 - 简化
+policy_filters: 16          # (32→16)
+policy_fc_size: 128         # (512→128)
+
+# 价值头 - 简化
+value_filters: 8            # (16→8)
+value_fc_size: 64           # (256→64)
+
+# 激活函数
+activation: "gelu"
+
+# 归一化
+use_layer_norm: true
+use_batch_norm: true
+
+# Dropout
+dropout: 0.2                # (0.3→0.2)
+
+# 权重初始化
+weight_init: "xavier"
+
+# 位置编码
+use_positional_encoding: true

@@ -132,16 +132,17 @@ class DotsAndBoxesTransformer(nn.Module):
     2. Transformer 捕获全局关系
     3. SE 通道注意力增强重要特征
     """
-    def __init__(self, game, num_filters=256, num_blocks=12, num_heads=8):
+    def __init__(self, game, num_filters=256, num_blocks=12, num_heads=8, input_channels=9):
         super(DotsAndBoxesTransformer, self).__init__()
         self.action_size = game.get_action_size()
         self.board_h = game.num_rows + 1
         self.board_w = game.num_cols + 1
         self.board_size = self.board_h * self.board_w
+        self.input_channels = input_channels
         
         # Stem: 初始特征提取
         self.stem = nn.Sequential(
-            nn.Conv2d(9, num_filters // 2, 3, padding=1),
+            nn.Conv2d(input_channels, num_filters // 2, 3, padding=1),
             nn.BatchNorm2d(num_filters // 2),
             nn.GELU(),
             nn.Conv2d(num_filters // 2, num_filters, 3, padding=1),
@@ -158,9 +159,9 @@ class DotsAndBoxesTransformer(nn.Module):
         self.use_transformer = True
         if self.use_transformer:
             self.to_patches = nn.Conv2d(num_filters, num_filters, 1)
-            self.pos_embedding = nn.Parameter(
-                torch.randn(1, self.board_size, num_filters)
-            )
+            # 位置编码将在forward中动态生成,以适应不同的输入大小
+            self.register_buffer('pos_embedding_initialized', torch.tensor(False))
+            self.pos_embedding = None
             self.transformer_blocks = nn.ModuleList([
                 TransformerBlock(num_filters, num_heads) 
                 for _ in range(num_blocks // 2)
@@ -168,33 +169,29 @@ class DotsAndBoxesTransformer(nn.Module):
             self.from_patches = nn.Linear(num_filters, num_filters)
         
         # Policy Head - 预测动作概率
-        self.policy_head = nn.Sequential(
+        self.policy_conv = nn.Sequential(
             ConvBlock(num_filters, num_filters // 2),
             nn.Conv2d(num_filters // 2, 32, 1),
             nn.BatchNorm2d(32),
-            nn.GELU(),
-            nn.Flatten(),
-            nn.Linear(32 * self.board_size, 512),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(512, self.action_size)
+            nn.GELU()
         )
+        # 动态线性层将在第一次forward时初始化
+        self.policy_fc1 = None
+        self.policy_fc2 = nn.Linear(512, self.action_size)
+        self.policy_dropout = nn.Dropout(0.3)
         
         # Value Head - 预测局面价值
-        self.value_head = nn.Sequential(
+        self.value_conv = nn.Sequential(
             ConvBlock(num_filters, num_filters // 4),
             nn.Conv2d(num_filters // 4, 16, 1),
             nn.BatchNorm2d(16),
-            nn.GELU(),
-            nn.Flatten(),
-            nn.Linear(16 * self.board_size, 256),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 64),
-            nn.GELU(),
-            nn.Linear(64, 1),
-            nn.Tanh()
+            nn.GELU()
         )
+        # 动态线性层将在第一次forward时初始化
+        self.value_fc1 = None
+        self.value_fc2 = nn.Linear(256, 64)
+        self.value_fc3 = nn.Linear(64, 1)
+        self.value_dropout = nn.Dropout(0.3)
         
         self._init_weights()
         
@@ -229,6 +226,12 @@ class DotsAndBoxesTransformer(nn.Module):
             x = self.to_patches(x)
             x = x.flatten(2).transpose(1, 2)  # (B, H*W, C)
             
+            # 动态初始化位置编码
+            if self.pos_embedding is None or self.pos_embedding.shape[1] != H * W:
+                self.pos_embedding = nn.Parameter(
+                    torch.randn(1, H * W, C, device=x.device)
+                )
+            
             # Add positional embedding
             x = x + self.pos_embedding
             
@@ -243,9 +246,45 @@ class DotsAndBoxesTransformer(nn.Module):
             # Residual connection
             x = x + conv_out
         
-        # Dual heads
-        policy = F.log_softmax(self.policy_head(x), dim=1)
-        value = self.value_head(x)
+        # Policy head
+        policy = self.policy_conv(x)
+        B, C_p, H_p, W_p = policy.shape
+        policy = policy.flatten(1)
+        
+        # 动态初始化policy fc1
+        if self.policy_fc1 is None or self.policy_fc1.in_features != policy.shape[1]:
+            self.policy_fc1 = nn.Linear(policy.shape[1], 512).to(x.device)
+            # 初始化权重
+            nn.init.kaiming_normal_(self.policy_fc1.weight, mode='fan_out', nonlinearity='relu')
+            if self.policy_fc1.bias is not None:
+                nn.init.constant_(self.policy_fc1.bias, 0)
+        
+        policy = self.policy_fc1(policy)
+        policy = F.gelu(policy)
+        policy = self.policy_dropout(policy)
+        policy = self.policy_fc2(policy)
+        policy = F.log_softmax(policy, dim=1)
+        
+        # Value head
+        value = self.value_conv(x)
+        B, C_v, H_v, W_v = value.shape
+        value = value.flatten(1)
+        
+        # 动态初始化value fc1
+        if self.value_fc1 is None or self.value_fc1.in_features != value.shape[1]:
+            self.value_fc1 = nn.Linear(value.shape[1], 256).to(x.device)
+            # 初始化权重
+            nn.init.kaiming_normal_(self.value_fc1.weight, mode='fan_out', nonlinearity='relu')
+            if self.value_fc1.bias is not None:
+                nn.init.constant_(self.value_fc1.bias, 0)
+        
+        value = self.value_fc1(value)
+        value = F.gelu(value)
+        value = self.value_dropout(value)
+        value = self.value_fc2(value)
+        value = F.gelu(value)
+        value = self.value_fc3(value)
+        value = torch.tanh(value)
         
         return policy, value
 

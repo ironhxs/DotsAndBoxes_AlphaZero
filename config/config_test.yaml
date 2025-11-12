@@ -1,0 +1,68 @@
+# AlphaZero 测试配置（4060 Laptop 快速验证）
+
+defaults:
+  - _self_
+  - game: dots_and_boxes
+  - model: transformer_test  # 使用简化的测试配置
+  - trainer: alphazero
+
+# 运行模式
+mode: "train"
+
+# 硬件配置
+cuda: true
+gpu_ids: "0"
+seed: 42
+
+# 训练配置 - 快速测试
+num_iterations: 5           # (1000→5) 只跑5轮测试
+checkpoint_interval: 2      # (10→2)
+eval_interval: 2            # (5→2)
+
+# 自我对弈配置 - 减少对弈局数
+num_self_play_games: 10     # (100→10) 每轮只玩10局
+num_parallel_games: 4       # (8→4) 并行4局
+temperature_threshold: 10   # (15→10)
+
+# MCTS 配置 - 大幅减少模拟次数
+num_simulations: 50         # (800→50) 快速测试
+cpuct: 1.0
+dirichlet_alpha: 0.3
+dirichlet_epsilon: 0.25
+
+# 神经网络训练配置 - 减小batch和数据量
+batch_size: 64              # (512→64)
+learning_rate: 0.001
+weight_decay: 1e-4
+train_epochs: 2             # (10→2)
+replay_buffer_size: 5000    # (200000→5000)
+
+# 混合精度训练
+use_amp: true
+
+# 路径配置
+save_to: "results/test_4060"
+checkname: "alphazero_test"
+
+# 日志配置
+log_interval: 5             # (10→5)
+tensorboard: true
+
+# 评估配置 - 减少评估局数
+num_eval_games: 10          # (50→10)
+eval_against: "random"
+
+# Arena 配置 - 简化对战
+arena_mode: "gpu_thread"
+arena_games: 20             # (100→20)
+arena_threshold: 0.55
+arena_num_workers: 4        # (6→4)
+arena_mcts_simulations: 50  # (200→50)
+
+# 可视化
+visualize: false
+save_game_records: true
+
+# 分布式训练
+distributed: false
+world_size: 1

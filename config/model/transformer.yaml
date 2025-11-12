@@ -1,0 +1,41 @@
+# Transformer 模型配置（适用于点格棋）
+
+# 模型类型
+name: "transformer"
+
+# 网络结构
+num_blocks: 12              # 总块数（6个Conv + 6个Transformer）
+num_filters: 256            # 特征维度
+num_heads: 8                # 多头注意力的头数
+
+# ConvNeXt 块配置
+conv_kernel_size: 7         # 深度卷积核大小
+mlp_ratio: 4.0              # MLP扩展比例
+
+# Transformer 块配置
+attention_dropout: 0.1      # 注意力dropout
+mlp_dropout: 0.3            # MLP dropout
+
+# 策略头（Policy Head）
+policy_filters: 32          # 策略头的卷积核数量
+policy_fc_size: 512         # 策略头全连接层大小
+
+# 价值头（Value Head）
+value_filters: 16           # 价值头的卷积核数量
+value_fc_size: 256          # 价值头全连接层大小
+
+# 激活函数
+activation: "gelu"          # gelu 更适合 Transformer
+
+# 归一化
+use_layer_norm: true        # Transformer 使用 LayerNorm
+use_batch_norm: true        # Conv 部分使用 BatchNorm
+
+# Dropout（防止过拟合）
+dropout: 0.3                # 全局dropout率
+
+# 权重初始化
+weight_init: "xavier"       # xavier 更适合 Transformer
+
+# 位置编码
+use_positional_encoding: true

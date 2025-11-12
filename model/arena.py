@@ -1,332 +1,268 @@
 # -*- coding: utf-8 -*-
-"""Arena - 模型对战评估器 (AlphaZero核心组件)"""
+"""
+Arena - AlphaZero模型对战系统
+新模型 vs 旧模型对战，只有胜率>阈值才接受新模型
+"""
 
 import numpy as np
 from tqdm import tqdm
-from .mcts import MCTS
-from multiprocessing import Pool, cpu_count, get_context
 import torch
-
-
-def _init_worker_cuda():
-    """子进程初始化函数 - 设置 CUDA 环境"""
-    import torch
-    import os
-    
-    if torch.cuda.is_available():
-        try:
-            # 设置每个进程使用独立的 CUDA 设备
-            # 或者禁用 CUDA，只用 CPU（更稳定）
-            # torch.cuda.set_device(os.getpid() % torch.cuda.device_count())
-            
-            # 触发 CUDA 初始化
-            device = torch.cuda.current_device()
-            torch.cuda.set_device(device)
-            
-            # 禁用 cudnn benchmark (多进程环境下更稳定)
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.enabled = True
-            
-            # 预热 cuDNN
-            dummy = torch.zeros(1, 1, 1, 1).cuda()
-            _ = dummy + dummy
-            del dummy
-            torch.cuda.synchronize()
-            
-        except Exception as e:
-            print(f"⚠️ Worker CUDA初始化失败: {e}, 将使用CPU模式")
-            torch.cuda.is_available = lambda: False
-
-
-def _play_single_game(args_tuple):
-    """全局函数用于多进程并行对战"""
-    game, p1_state_dict, p2_state_dict, model_args, game_args, player1_starts, seed = args_tuple
-    
-    # 设置随机种子
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-    
-    # 🔧 多进程环境：每个子进程独立使用 GPU
-    # 注意：需要足够的显存（每个进程加载2个模型）
-    use_cuda = game_args.get('cuda', False) and torch.cuda.is_available()
-    
-    # 重建两个模型
-    from .model_transformer import DotsAndBoxesTransformer
-    player1 = DotsAndBoxesTransformer(
-        game,
-        num_filters=model_args['num_filters'],
-        num_blocks=model_args['num_res_blocks'],
-        num_heads=model_args['num_heads']
-    )
-    player1.load_state_dict(p1_state_dict)
-    player1.eval()
-    
-    player2 = DotsAndBoxesTransformer(
-        game,
-        num_filters=model_args['num_filters'],
-        num_blocks=model_args['num_res_blocks'],
-        num_heads=model_args['num_heads']
-    )
-    player2.load_state_dict(p2_state_dict)
-    player2.eval()
-    
-    # ⚡ Arena推理：多进程环境下使用CPU（更稳定）
-    # 如需GPU加速，请使用 arena_batch_inference 模式
-    if use_cuda:
-        try:
-            player1 = player1.cuda()
-            player2 = player2.cuda()
-        except Exception as e:
-            print(f"⚠️ GPU初始化失败，降级为CPU: {e}")
-            use_cuda = False
-    
-    # 创建MCTS
-    mcts1 = MCTS(game, player1, game_args)
-    mcts2 = MCTS(game, player2, game_args)
-    mcts_players = [mcts1, mcts2]
-    
-    # 执行对战
-    cur_player_idx = 0 if player1_starts else 1
-    state = game.get_initial_state()
-    
-    while True:
-        mcts = mcts_players[cur_player_idx]
-        pi = mcts.get_action_prob(state, temp=0)
-        
-        valid_moves = game.get_valid_moves(state)
-        pi = pi * valid_moves
-        
-        if np.sum(pi) == 0:
-            action = np.random.choice(np.where(valid_moves > 0)[0])
-        else:
-            action = np.argmax(pi)
-        
-        state = game.get_next_state(state, action)
-        
-        if state.is_terminal():
-            returns = state.returns()
-            if len(returns) >= 2:
-                if player1_starts:
-                    result = 1 if returns[0] > returns[1] else (-1 if returns[0] < returns[1] else 0.0001)
-                else:
-                    result = 1 if returns[1] > returns[0] else (-1 if returns[1] < returns[0] else 0.0001)
-                
-                # 🔥 显式释放显存
-                del player1, player2, mcts1, mcts2
-                if use_cuda:
-                    torch.cuda.empty_cache()
-                
-                return result
-        
-        cur_player_idx = 1 - cur_player_idx
+from .mcts import MCTS
 
 
 class Arena:
     """
-    Arena类用于评估两个模型的对战胜率
-    这是AlphaZero中判断新模型是否优于旧模型的关键机制
+    Arena对战系统
+    
+    让两个玩家对战多局，统计胜率
+    玩家可以是：神经网络+MCTS、纯MCTS、随机等
     """
     
-    def __init__(self, p1_state_dict, p2_state_dict, game, args):
+    def __init__(self, game, player1, player2, args):
         """
-        p1_state_dict: 第一个玩家的模型权重 (state_dict)
-        p2_state_dict: 第二个玩家的模型权重 (state_dict)
-        game: 游戏实例
-        args: MCTS参数
+        初始化Arena
+        
+        Args:
+            game: 游戏环境
+            player1: 玩家1 (通常是新模型)
+            player2: 玩家2 (通常是旧模型)
+            args: 配置参数
         """
-        self.p1_state_dict = p1_state_dict
-        self.p2_state_dict = p2_state_dict
         self.game = game
+        self.player1 = player1
+        self.player2 = player2
         self.args = args
-    
-    def play_game(self, player1_starts=True, verbose=False):
+        
+    def play_game(self, player1_starts=True):
         """
-        执行一局完整对战
+        进行一局游戏
         
         Args:
             player1_starts: player1是否先手
-            verbose: 是否打印详细信息
-        
+            
         Returns:
-            1: player1胜
-            -1: player1负 (player2胜)
-            0.0001: 平局 (避免完全0值影响统计)
+            1: player1赢
+            -1: player2赢
+            0: 平局
         """
-        # 🔥 重建模型（避免跨进程传递GPU tensor）
-        from .model_transformer import DotsAndBoxesTransformer
-        
-        player1 = DotsAndBoxesTransformer(
-            self.game,
-            num_filters=self.args['num_filters'],
-            num_blocks=self.args['num_res_blocks'],
-            num_heads=self.args['num_heads']
-        )
-        player1.load_state_dict(self.p1_state_dict)
-        player1.eval()
-        
-        player2 = DotsAndBoxesTransformer(
-            self.game,
-            num_filters=self.args['num_filters'],
-            num_blocks=self.args['num_res_blocks'],
-            num_heads=self.args['num_heads']
-        )
-        player2.load_state_dict(self.p2_state_dict)
-        player2.eval()
-        
-        if self.args.get('cuda', False) and torch.cuda.is_available():
-            player1 = player1.cuda()
-            player2 = player2.cuda()
-        
-        players = [player1, player2]
-        cur_player_idx = 0 if player1_starts else 1
-        
-        # Arena对战使用更少的MCTS次数加速验证
-        arena_args = self.args.copy()
-        arena_args['num_simulations'] = self.args.get('arena_mcts_simulations', 
-                                                       self.args.get('num_simulations', 25))
-        
-        # 为每个玩家创建独立的MCTS
-        mcts1 = MCTS(self.game, player1, arena_args)
-        mcts2 = MCTS(self.game, player2, arena_args)
-        mcts_players = [mcts1, mcts2]
-        
+        player_mapping = {
+            0: self.player1 if player1_starts else self.player2,
+            1: self.player2 if player1_starts else self.player1,
+        }
+        player1_actual_id = 0 if player1_starts else 1
+
         state = self.game.get_initial_state()
-        it = 0
-        
-        while True:
-            it += 1
-            if verbose:
-                print(f"Turn {it}, Player {cur_player_idx + 1}")
-            
-            # 获取当前玩家的MCTS
-            mcts = mcts_players[cur_player_idx]
-            
-            # 使用MCTS获取最佳动作 (temperature=0, 选择最优)
-            pi = mcts.get_action_prob(state, temp=0)
-            
-            # 选择概率最高的动作
+        move_count = 0
+        max_moves = self.args.get('arena_max_moves', 300)
+
+        while not self.game.is_terminal(state) and move_count < max_moves:
+            move_count += 1
+
+            current_player_id = self.game.get_current_player(state)
+            if current_player_id not in player_mapping:
+                raise RuntimeError(f"Arena 遇到未知的玩家编号: {current_player_id}")
+
+            current_player = player_mapping[current_player_id]
+            action = current_player(state)
+
             valid_moves = self.game.get_valid_moves(state)
-            pi = pi * valid_moves  # 确保只选择合法动作
-            
-            if np.sum(pi) == 0:
-                # 如果没有合法动作，选择任意合法动作
-                action = np.random.choice(np.where(valid_moves > 0)[0])
-            else:
-                action = np.argmax(pi)
-            
-            if verbose:
-                print(f"  Action: {action}")
-            
-            # 执行动作
+            if action < 0 or action >= len(valid_moves) or valid_moves[action] == 0:
+                # 非法动作，当前玩家直接判负
+                return -1 if current_player_id == player1_actual_id else 1
+
             state = self.game.get_next_state(state, action)
-            
-            # 检查游戏是否结束
-            if state.is_terminal():
-                returns = state.returns()
-                if len(returns) >= 2:
-                    # player1视角的结果
-                    if player1_starts:
-                        result = 1 if returns[0] > returns[1] else (-1 if returns[0] < returns[1] else 0.0001)
-                    else:
-                        result = 1 if returns[1] > returns[0] else (-1 if returns[1] < returns[0] else 0.0001)
-                    
-                    if verbose:
-                        print(f"Game over. Returns: {returns}, Result: {result}")
-                    
-                    # 🔥 释放GPU显存
-                    del player1, player2, mcts1, mcts2
-                    if self.args.get('cuda', False) and torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    
-                    return result
-            
-            # 切换玩家
-            new_player = self.game.get_current_player(state)
-            # OpenSpiel中player可能不变(如吃子再走一步)，这里简化处理
-            cur_player_idx = 1 - cur_player_idx
+
+        if self.game.is_terminal(state):
+            return self.game.get_game_result(state, player1_actual_id)
+
+        return 0
     
-    def play_games(self, num_games, verbose=False):
+    def play_games(self, num_games, num_workers=1, random_start=False):
         """
-        进行多局对战并统计胜率 (支持多进程并行)
+        进行多局对战（支持并行）
         
         Args:
-            num_games: 对战局数 (必须是偶数，确保公平)
-            verbose: 是否显示详细信息
-        
+            num_games: 对战局数
+            num_workers: 并行进程数（1=串行，>1=并行）
+            random_start: 是否随机先手（True=随机，False=交替）
+            
         Returns:
-            (wins, losses, draws): player1的胜/负/平局数
+            (player1_wins, player2_wins, draws)
         """
-        num_games = int(num_games / 2) * 2  # 确保是偶数
+        num_games = max(1, num_games)  # 至少1局
         
-        # Arena使用更多MCTS确保评估准确性（2倍于训练）
-        # Arena使用更多MCTS确保评估准确性（2倍于训练）
-        mcts_sims = self.args.get('arena_mcts_simulations', 
-                                   self.args.get('num_simulations', 100) * 2)
-        # CPU多进程版本使用arena_num_workers或num_workers
-        num_workers = min(
-            self.args.get('arena_num_workers', self.args.get('num_workers', 4)), 
-            num_games, 
-            cpu_count() - 1
-        )
-        use_parallel = self.args.get('use_parallel', True) and num_workers > 1
-        
-        print(f"\n{'='*70}")
-        print(f"🥊 Arena对战: {num_games} 局 (MCTS={mcts_sims}次, 高精度评估)")
-        print(f"   并行: {num_workers} 进程 | 先手/后手各 {num_games//2} 局")
-        print(f"{'='*70}")
-        
-        if use_parallel:
-            # 准备参数（已经是state_dict）
-            p1_state = self.p1_state_dict
-            p2_state = self.p2_state_dict
-            
-            model_args = {
-                'num_filters': self.args['num_filters'],
-                'num_res_blocks': self.args['num_res_blocks'],
-                'num_heads': self.args['num_heads']
-            }
-            
-            # Arena专用配置：更多MCTS
-            game_args = self.args.copy()
-            game_args['num_simulations'] = mcts_sims
-            
-            tasks = [
-                (self.game, p1_state, p2_state, model_args, game_args, 
-                 (i % 2 == 0), np.random.randint(0, 1000000))
-                for i in range(num_games)
-            ]
-            
-            # 并行执行对战（使用spawn模式支持CUDA）
-            ctx = get_context('spawn')
-            with ctx.Pool(processes=num_workers, initializer=_init_worker_cuda) as pool:
-                results = list(tqdm(
-                    pool.imap(_play_single_game, tasks),
-                    total=num_games,
-                    desc=f"🎮 对战({num_workers}进程)"
-                ))
+        if num_workers <= 1:
+            # 串行执行
+            return self._play_games_serial(num_games, random_start)
         else:
-            # 串行版本（保留用于调试）
-            results = []
-            for i in tqdm(range(num_games), desc="对战进度"):
+            # 并行执行
+            return self._play_games_parallel(num_games, num_workers, random_start)
+    
+    def _play_games_serial(self, num_games, random_start=False):
+        """串行执行多局游戏"""
+        import random
+        
+        player1_wins = 0
+        player2_wins = 0
+        draws = 0
+        
+        for i in tqdm(range(num_games), desc="Arena对战"):
+            # 决定先手
+            if random_start:
+                player1_starts = random.random() < 0.5
+            else:
                 player1_starts = (i % 2 == 0)
-                result = self.play_game(player1_starts=player1_starts, verbose=verbose)
-                results.append(result)
+            
+            result = self.play_game(player1_starts=player1_starts)
+            
+            if result == 1:
+                player1_wins += 1
+            elif result == -1:
+                player2_wins += 1
+            else:
+                draws += 1
+        
+        return player1_wins, player2_wins, draws
+    
+    def _play_games_parallel(self, num_games, num_workers, random_start=False):
+        """并行执行多局游戏"""
+        import multiprocessing as mp
+        import random
+        
+        # ⚠️ CUDA 多进程必须使用 spawn 模式
+        mp_context = mp.get_context('spawn')
+        
+        # 生成先手分配
+        if random_start:
+            starts = [random.random() < 0.5 for _ in range(num_games)]
+        else:
+            starts = [i % 2 == 0 for i in range(num_games)]
+        
+        # 创建任务列表
+        tasks = [(i, starts[i]) for i in range(num_games)]
+        
+        # 并行执行
+        with mp_context.Pool(num_workers) as pool:
+            results = list(tqdm(
+                pool.imap(self._play_game_worker, tasks),
+                total=num_games,
+                desc=f"Arena对战({num_workers}进程)"
+            ))
         
         # 统计结果
-        one_won = sum(1 for r in results if r == 1)
-        two_won = sum(1 for r in results if r == -1)
-        draws = sum(1 for r in results if r != 1 and r != -1)
+        player1_wins = sum(1 for r in results if r == 1)
+        player2_wins = sum(1 for r in results if r == -1)
+        draws = sum(1 for r in results if r == 0)
         
-        # 输出统计结果
-        print(f"\n{'='*70}")
-        print(f"📊 对战结果统计:")
-        print(f"{'='*70}")
-        print(f"Player1 (新模型) 胜: {one_won}/{num_games} ({100*one_won/num_games:.1f}%)")
-        print(f"Player2 (旧模型) 胜: {two_won}/{num_games} ({100*two_won/num_games:.1f}%)")
-        print(f"平局:              {draws}/{num_games} ({100*draws/num_games:.1f}%)")
-        print(f"{'='*70}\n")
+        return player1_wins, player2_wins, draws
+    
+    def _play_game_worker(self, task):
+        """并行工作函数（用于多进程）"""
+        game_idx, player1_starts = task
+        return self.play_game(player1_starts=player1_starts)
+
+
+class NeuralNetPlayer:
+    """神经网络玩家 (使用MCTS)"""
+    
+    def __init__(self, game, nnet, args):
+        self.game = game
+        self.nnet = nnet
+        self.mcts = MCTS(game, nnet, args)
+        self.args = args
         
-        return one_won, two_won, draws
+    def __call__(self, state):
+        """
+        根据当前状态选择动作
+        
+        Args:
+            state: 游戏状态
+            
+        Returns:
+            action: 选择的动作
+        """
+        # 使用MCTS获取动作概率 (temp=0表示贪心选择)
+        probs = self.mcts.get_action_prob(state, temp=0)
+        
+        # 选择概率最高的合法动作
+        valid_moves = self.game.get_valid_moves(state)
+        probs = probs * valid_moves  # 只考虑合法动作
+        
+        if np.sum(probs) > 0:
+            probs = probs / np.sum(probs)
+            action = np.argmax(probs)
+        else:
+            # 如果没有合法动作，随机选一个
+            action = np.random.choice(np.where(valid_moves > 0)[0])
+        
+        return action
+
+
+class RandomPlayer:
+    """随机玩家 (baseline)"""
+    
+    def __init__(self, game):
+        self.game = game
+        
+    def __call__(self, state):
+        """随机选择合法动作"""
+        valid_moves = self.game.get_valid_moves(state)
+        valid_actions = np.where(valid_moves > 0)[0]
+        return np.random.choice(valid_actions)
+
+
+def compare_models(game, new_nnet, old_nnet, args):
+    """
+    比较新旧模型
+    
+    Args:
+        game: 游戏环境
+        new_nnet: 新模型
+        old_nnet: 旧模型 (如果为None，则与随机玩家比较)
+        args: 配置参数
+        
+    Returns:
+        (win_rate, should_accept): 胜率和是否接受新模型
+    """
+    # 创建MCTS参数 (Arena用更多模拟次数)
+    arena_args = args.copy()
+    arena_args['num_simulations'] = args.get('arena_mcts_simulations', 200)
+    
+    # 创建玩家
+    new_player = NeuralNetPlayer(game, new_nnet, arena_args)
+    
+    if old_nnet is not None:
+        old_player = NeuralNetPlayer(game, old_nnet, arena_args)
+    else:
+        # 如果没有旧模型，与随机玩家比较
+        old_player = RandomPlayer(game)
+    
+    # 创建Arena
+    arena = Arena(game, new_player, old_player, arena_args)
+    
+    # 进行对战
+    num_games = args.get('arena_compare', 40)
+    new_wins, old_wins, draws = arena.play_games(num_games)
+    
+    # 计算胜率
+    total_decisive = new_wins + old_wins
+    if total_decisive > 0:
+        win_rate = new_wins / total_decisive
+    else:
+        win_rate = 0.5  # 全平局，算50%
+    
+    # 判断是否接受新模型
+    threshold = args.get('update_threshold', 0.55)
+    should_accept = win_rate >= threshold
+    
+    # 打印结果
+    print(f"\n{'='*60}")
+    print(f"Arena对战结果:")
+    print(f"  新模型: {new_wins}胜 ({win_rate*100:.1f}%)")
+    print(f"  旧模型: {old_wins}胜")
+    print(f"  平局: {draws}")
+    print(f"  阈值: {threshold*100:.1f}%")
+    print(f"  决定: {'✅ 接受新模型' if should_accept else '❌ 拒绝新模型，保留旧模型'}")
+    print(f"{'='*60}\n")
+    
+    return win_rate, should_accept
