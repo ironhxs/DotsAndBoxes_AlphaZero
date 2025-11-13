@@ -94,9 +94,9 @@ class HumanPlayer(Player):
             if 0 <= row <= num_rows and 0 <= col < num_cols:
                 return row * num_cols + col
         elif edge_type.lower() == 'v':
-            # 竖边
-            if 0 <= row < num_rows + 1 and 0 <= col <= num_cols:
-                return num_horizontal + col * (num_rows + 1) + row
+            # 竖边 (OpenSpiel 使用行优先编码)
+            if 0 <= row <= num_rows and 0 <= col < num_cols + 1:
+                return num_horizontal + row * (num_cols + 1) + col
         
         return None
     
@@ -112,10 +112,10 @@ class HumanPlayer(Player):
             col = action % num_cols
             return f"横边 h {row} {col} (点({row},{col})到点({row},{col+1}))", "h", row, col
         else:
-            # 竖边
+            # 竖边 (OpenSpiel 使用行优先编码)
             vertical_idx = action - num_horizontal
-            col = vertical_idx // (num_rows + 1)
-            row = vertical_idx % (num_rows + 1)
+            row = vertical_idx // (num_cols + 1)
+            col = vertical_idx % (num_cols + 1)
             return f"竖边 v {row} {col} (点({row},{col})到点({row+1},{col}))", "v", row, col
     
     def print_valid_moves_with_coords(self, state):
@@ -409,9 +409,9 @@ def load_model(checkpoint_path, game, device):
     """加载模型"""
     nnet = DotsAndBoxesTransformer(
         game=game,
-        num_filters=64,
-        num_blocks=4,
-        num_heads=4,
+        num_filters=256,
+        num_blocks=12,
+        num_heads=8,
         input_channels=9
     ).to(device)
     
@@ -440,7 +440,7 @@ def main():
     parser.add_argument('--mode', type=str, default='human',
                        choices=['human', 'ai', 'dual-ai'],
                        help='游戏模式: human (人机对战), ai (AI自我对弈), dual-ai (双AI对战)')
-    parser.add_argument('--checkpoint', type=str, default='results/test_4060/latest.pth',
+    parser.add_argument('--checkpoint', type=str, default='results/checkpoints/latest.pth',
                        help='AI1 模型路径')
     parser.add_argument('--checkpoint2', type=str, default=None,
                        help='AI2 模型路径 (仅用于 dual-ai 模式)')

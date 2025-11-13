@@ -22,13 +22,13 @@ checkpoint_interval: 30     # 每隔多少次迭代保存模型
 eval_interval: 20            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
 
 # 自我对弈配置
-num_self_play_games: 300    # 每次迭代的自我对弈局数（增加工作量）
+num_self_play_games: 200    # 每次迭代的自我对弈局数（增加工作量）
 num_parallel_games: 25      # 并行对弈的游戏数（12→16，更多worker）
 temperature_threshold: 15   # 前N步使用温度采样，之后贪心
 
 # MCTS 配置
-num_simulations: 200        # MCTS 模拟次数（100→400，增加计算量）
-cpuct: 1.0                  # UCB 探索常数
+num_simulations: 400        # MCTS 模拟次数（100→400，增加计算量）
+cpuct: 1.25                  # UCB 探索常数
 dirichlet_alpha: 0.3        # Dirichlet 噪声参数
 dirichlet_epsilon: 0.25     # 添加噪声的比例
 
@@ -37,7 +37,7 @@ batch_size: 7200            # 增大 batch（512→1024，充分利用显存）
 learning_rate: 0.001
 weight_decay: 1e-4
 train_epochs: 300            # 增加训练轮数 (1→10)
-replay_buffer_size: 360000  # 经验池大小 (约保留 20 次迭代，300局×60步×20≈360000样本)
+replay_buffer_size: 60000  # 经验池大小 (360000→180000, 约保留10次迭代, 加快训练)
 
 # 并行优化参数
 use_parallel: true

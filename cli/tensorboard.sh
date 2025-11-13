@@ -5,4 +5,4 @@ echo "启动 TensorBoard..."
 echo "访问地址: http://localhost:6006"
 echo ""
 
-tensorboard --logdir results/logs --port 6006
+tensorboard --logdir results --port 6006

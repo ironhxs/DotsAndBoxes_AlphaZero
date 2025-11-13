@@ -315,7 +315,7 @@ class BaseCoach(ABC):
         progress_bar = tqdm(
             total=total_epochs,
             desc='Train',
-            bar_format='({postfix[0]:<15})' + '{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {postfix[1]}]',
+            bar_format='({postfix[0]:<15})' + '{desc}:    {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {postfix[1]}]',
             postfix=['Loss=0.0000', 'pi=0.0000, v=0.0000']
         )
         
