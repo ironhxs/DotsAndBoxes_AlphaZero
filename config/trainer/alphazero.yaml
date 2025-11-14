@@ -11,31 +11,32 @@ update_threshold: 0.55      # 模型更新胜率阈值
 # num_iters_for_train_examples_history: 20  # 已废弃,使用 config.yaml 中的 replay_buffer_size
 
 # MCTS 配置
-num_simulations: 800        # MCTS 模拟次数
+num_simulations: 1200       # 从800增加到1200（提高策略质量）
 cpuct: 1.0                  # UCB 探索常数
 
 # 训练参数
-epochs: 10                  # 每次迭代的训练轮数
-batch_size: 512             # 批次大小
-lr: 0.001                   # 学习率
+epochs: 10                  # AlphaZero标准:每样本训练~4次
+batch_size: 4096            # 从512增加到4096（与主配置一致）
+lr: 0.001                   # AlphaZero标准lr（SGD更稳定）
 
-# 优化器
-optimizer: "adam"           # adam, sgd, adamw
-momentum: 0.9               # SGD momentum
+# 优化器 - AlphaZero标准配置
+optimizer: "sgd"            # AlphaZero论文使用SGD，不是Adam
+momentum: 0.9               # SGD momentum（AlphaZero标准）
 nesterov: true              # 使用 Nesterov momentum
+weight_decay: 1e-4          # L2正则化
 
 # 学习率调度
 lr_scheduler: "step"        # step, cosine, poly, none
-lr_decay_steps: [500, 800]  # StepLR 的衰减步数
+lr_decay_steps: [120, 170]  # StepLR 的衰减步数 (对应AlphaZero论文的400k/600k步比例)
 lr_decay_gamma: 0.1         # 学习率衰减因子
 
 # 损失函数权重
 value_loss_weight: 1.0      # 价值损失权重
 policy_loss_weight: 1.0     # 策略损失权重
 
-# 梯度裁剪
-grad_clip: 5.0              # 梯度裁剪阈值，None 表示不裁剪
-max_grad_norm: 5.0          # 最大梯度范数（别名）
+# 梯度裁剪（更严格以避免梯度爆炸）
+grad_clip: 2.0              # 从5.0降低到2.0，解决conv层梯度>200的问题
+max_grad_norm: 2.0          # 最大梯度范数（别名）
 
 # 经验回放
 min_replay_size: 1000       # 开始训练前的最小样本数
@@ -44,9 +45,9 @@ prioritized_replay: false   # 是否使用优先经验回放
 # 数据增强
 augment_data: false         # 是否使用对称性增强数据
 
-# Early Stopping
-patience: 50                # 早停耐心值（迭代次数）
-min_delta: 0.001            # 最小改进量
+# Early Stopping (Epoch级别)
+patience: 10                # 早停耐心值: 连续多少个epoch损失不下降就停止训练
+min_delta: 0.0001           # 最小改进量: 损失下降小于此值视为无改进
 
 # Checkpoint 管理
 save_best_only: false       # 是否只保存最佳模型

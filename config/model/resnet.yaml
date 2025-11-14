@@ -4,8 +4,8 @@
 name: "resnet"
 
 # 网络结构
-num_residual_blocks: 5      # 残差块数量（轻量级：5, 标准：10-20）
-num_filters: 64             # 卷积核数量（轻量级：64, 标准：128-256）
+num_blocks: 6               # 残差块数量（6块更快，参数量约2M）
+num_filters: 128            # 卷积核数量（128保持一定容量）
 kernel_size: 3              # 卷积核大小
 
 # 策略头（Policy Head）
@@ -23,7 +23,7 @@ activation: "relu"          # relu, leaky_relu, elu
 use_batch_norm: true
 
 # Dropout（防止过拟合）
-dropout: 0.0                # 0.0 表示不使用 dropout
+dropout: 0.0                # AlphaZero不使用dropout，仅用weight_decay
 
 # 权重初始化
 weight_init: "kaiming"      # kaiming, xavier, normal

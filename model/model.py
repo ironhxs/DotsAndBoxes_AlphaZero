@@ -79,8 +79,16 @@ class DotsAndBoxesNet(nn.Module):
     4. 添加 SE 注意力机制
     5. 改进的初始化策略
     """
-    def __init__(self, game, num_filters=128, num_res_blocks=10, dropout=0.3, use_se=True):
+    def __init__(self, game, args=None, num_filters=128, num_res_blocks=10, num_blocks=None, dropout=0.3, use_se=True, **kwargs):
         super(DotsAndBoxesNet, self).__init__()
+        
+        # 兼容多种调用方式
+        if num_blocks is not None:  # 兼容 num_blocks 参数
+            num_res_blocks = num_blocks
+        if args is not None:
+            num_filters = args.get('num_filters', num_filters)
+            num_res_blocks = args.get('num_res_blocks', args.get('num_blocks', num_res_blocks))
+            dropout = args.get('dropout', dropout)
         
         self.action_size = game.get_action_size()
         self.board_size = (game.num_rows + 1) * (game.num_cols + 1)

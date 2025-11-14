@@ -77,6 +77,48 @@ class BaseCoach(ABC):
         self.previous_nnet = copy.deepcopy(self.nnet)
         # print("✓ 初始化 previous_net = current_net")
     
+    def _initialize_global_optimizer(self):
+        """初始化全局优化器和学习率调度器（跨迭代使用）"""
+        weight_decay = self.args.get('weight_decay', 1e-4)
+        if isinstance(weight_decay, str):
+            weight_decay = float(weight_decay)
+        
+        # 根据配置选择优化器
+        optimizer_type = self.args.get('optimizer', 'adam').lower()
+        if optimizer_type == 'sgd':
+            self.global_optimizer = optim.SGD(
+                self.nnet.parameters(),
+                lr=self.args['lr'],
+                momentum=self.args.get('momentum', 0.9),
+                weight_decay=weight_decay,
+                nesterov=self.args.get('nesterov', True)
+            )
+        else:
+            self.global_optimizer = optim.Adam(
+                self.nnet.parameters(),
+                lr=self.args['lr'],
+                weight_decay=weight_decay
+            )
+        
+        # 学习率调度器（全局，跨迭代）
+        lr_scheduler_type = self.args.get('lr_scheduler', 'step')
+        if lr_scheduler_type == 'step':
+            milestones = self.args.get('lr_decay_steps', [500, 800])
+            gamma = self.args.get('lr_decay_gamma', 0.1)
+            self.global_scheduler = optim.lr_scheduler.MultiStepLR(
+                self.global_optimizer,
+                milestones=milestones,
+                gamma=gamma
+            )
+        elif lr_scheduler_type == 'cosine':
+            self.global_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.global_optimizer,
+                T_max=self.args['num_iterations'],
+                eta_min=self.args['lr'] * 0.01
+            )
+        else:
+            self.global_scheduler = None
+    
     @abstractmethod
     def execute_episode(self):
         """
@@ -119,6 +161,11 @@ class BaseCoach(ABC):
         cuda_enabled = self.args.get('cuda', False)
         print(f"Arena 模式: {arena_mode}, CUDA: {cuda_enabled}")
         
+        # 初始化全局学习率调度器（跨迭代）
+        self.global_optimizer = None
+        self.global_scheduler = None
+        self._initialize_global_optimizer()
+        
         for iteration in range(1, self.args['num_iterations'] + 1):
             # 设置当前迭代号（用于 TensorBoard 记录）
             self._current_iteration = iteration
@@ -155,6 +202,13 @@ class BaseCoach(ABC):
             # print(f'[2/3] 训练神经网络...')
             try:
                 train_stats = self.train(train_examples)
+                
+                # 全局学习率调度（每次迭代调用一次）
+                if self.global_scheduler is not None:
+                    self.global_scheduler.step()
+                    current_lr = self.global_optimizer.param_groups[0]['lr']
+                    if self.writer is not None:
+                        self.writer.add_scalar('Training/LearningRate', current_lr, iteration)
                 
                 # 关键：训练完成后，将主进程的模型移到 CPU，释放 GPU 显存
                 if self.args.get('cuda', False):
@@ -275,23 +329,30 @@ class BaseCoach(ABC):
         Returns:
             dict: 训练统计信息
         """
-        # 创建优化器
-        weight_decay = self.args.get('weight_decay', 1e-4)
-        if isinstance(weight_decay, str):
-            weight_decay = float(weight_decay)
-        
-        optimizer = optim.Adam(
-            self.nnet.parameters(),
-            lr=self.args['lr'],
-            weight_decay=weight_decay
-        )
-        
-        # 学习率调度器
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=self.args['epochs'],
-            eta_min=self.args['lr'] * 0.01
-        )
+        # 使用全局优化器（如果已初始化）
+        if hasattr(self, 'global_optimizer') and self.global_optimizer is not None:
+            optimizer = self.global_optimizer
+        else:
+            # 后备方案：创建临时优化器（兼容性）
+            weight_decay = self.args.get('weight_decay', 1e-4)
+            if isinstance(weight_decay, str):
+                weight_decay = float(weight_decay)
+            
+            optimizer_type = self.args.get('optimizer', 'adam').lower()
+            if optimizer_type == 'sgd':
+                optimizer = optim.SGD(
+                    self.nnet.parameters(),
+                    lr=self.args['lr'],
+                    momentum=self.args.get('momentum', 0.9),
+                    weight_decay=weight_decay,
+                    nesterov=self.args.get('nesterov', True)
+                )
+            else:
+                optimizer = optim.Adam(
+                    self.nnet.parameters(),
+                    lr=self.args['lr'],
+                    weight_decay=weight_decay
+                )
         
         # 混合精度训练
         use_amp = self.args.get('use_amp', False) and self.args.get('cuda', False)
@@ -419,8 +480,7 @@ class BaseCoach(ABC):
                     traceback.print_exc()
                     continue
             
-            # 学习率调度
-            scheduler.step()
+            # 不在这里调用 scheduler.step()，因为使用全局 scheduler 在 learn() 中调度
             
             # 记录 epoch 平均损失
             if num_batches_per_epoch > 0:
@@ -455,8 +515,9 @@ class BaseCoach(ABC):
         # 清理显存 - 删除所有训练相关的变量
         del examples  # 只删除 examples，不删除传入的 train_examples
         if self.args.get('cuda', False):
-            # 清理优化器状态
-            del optimizer, scheduler
+            # 清理优化器状态（如果不使用全局优化器）
+            if not hasattr(self, 'global_optimizer') or self.global_optimizer is None:
+                del optimizer
             if scaler is not None:
                 del scaler
             # 强制垃圾回收

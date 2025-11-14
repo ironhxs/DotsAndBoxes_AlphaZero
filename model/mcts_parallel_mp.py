@@ -23,7 +23,7 @@ def worker_play_game(args_tuple):
         训练样本列表
     """
     from model.game import DotsAndBoxesGame
-    from model.model_transformer import DotsAndBoxesTransformer
+    from model.model import DotsAndBoxesNet
     from model.mcts import MCTS
     
     game_args, nnet_state_dict, mcts_args, seed = args_tuple
@@ -37,11 +37,9 @@ def worker_play_game(args_tuple):
     
     # 初始化网络（每个进程独立）
     device = torch.device('cpu')  # Worker 用 CPU
-    nnet = DotsAndBoxesTransformer(
+    nnet = DotsAndBoxesNet(
         game=game,
-        num_blocks=mcts_args['num_res_blocks'],
-        num_filters=mcts_args['num_filters'],
-        num_heads=mcts_args['num_heads']
+        args=mcts_args
     ).to(device)
     nnet.load_state_dict(nnet_state_dict)
     nnet.eval()

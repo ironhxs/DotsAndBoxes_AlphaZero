@@ -34,7 +34,7 @@ warnings.filterwarnings('ignore', message='pkg_resources is deprecated')
 os.environ['PYTHONWARNINGS'] = 'ignore::UserWarning'
 
 from model.game import DotsAndBoxesGame
-from model.model_transformer import DotsAndBoxesTransformer as DotsAndBoxesNet
+from model.model import DotsAndBoxesNet
 from model.coach_parallel import ParallelCoach
 
 
@@ -115,7 +115,12 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         'batch_size': config.get('batch_size', trainer_config['batch_size']),
         'lr': float(config.get('learning_rate', trainer_config['lr'])),
         'weight_decay': config.get('weight_decay', 1e-4),
-        'grad_clip': trainer_config.get('max_grad_norm', 5.0),
+        'grad_clip': config.get('grad_clip', trainer_config.get('max_grad_norm', 5.0)),
+        
+        # 优化器配置
+        'optimizer': config.get('optimizer', trainer_config.get('optimizer', 'adam')),
+        'momentum': config.get('momentum', trainer_config.get('momentum', 0.9)),
+        'nesterov': config.get('nesterov', trainer_config.get('nesterov', True)),
         
         # 并行优化参数
         'use_parallel': True,
@@ -131,10 +136,11 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         'cuda': config.get('cuda', True) and torch.cuda.is_available(),
         'use_amp': config.get('use_amp', True),
         
-        # 模型配置
-        'num_filters': model_config['num_filters'],
-        'num_res_blocks': model_config['num_blocks'],
-        'num_heads': model_config['num_heads'],
+        # 模型配置 (兼容ResNet和Transformer)
+        'num_filters': model_config.get('num_filters', 128),
+        'num_res_blocks': model_config.get('num_blocks', model_config.get('num_residual_blocks', 6)),
+        'num_heads': model_config.get('num_heads', 4),  # Transformer专用，ResNet忽略
+        'dropout': model_config.get('dropout', 0.1),
         
         # 检查点
         'checkpoint': './results/checkpoints',

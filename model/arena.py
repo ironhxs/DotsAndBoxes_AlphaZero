@@ -367,26 +367,12 @@ def _arena_worker_gpu(task):
         # 创建游戏环境
         game = DotsAndBoxesGame()
         
-        # 创建神经网络（根据配置选择架构）
-        # 注意：使用正确的类名
-        from .model_transformer import DotsAndBoxesTransformer
+        # 创建神经网络（统一使用DotsAndBoxesNet）
         from .model import DotsAndBoxesNet
         
-        # 检测使用哪个模型（根据state_dict的键判断）
-        is_transformer = 'transformer_blocks.0.norm1.weight' in new_state_dict
-        
-        if is_transformer:
-            new_nnet = DotsAndBoxesTransformer(game, args.get('num_filters', 256), 
-                                               args.get('num_res_blocks', 12), 
-                                               args.get('num_heads', 8))
-            old_nnet = DotsAndBoxesTransformer(game, args.get('num_filters', 256), 
-                                               args.get('num_res_blocks', 12), 
-                                               args.get('num_heads', 8)) if old_state_dict else None
-        else:
-            new_nnet = DotsAndBoxesNet(game, args.get('num_filters', 128), 
-                                       args.get('num_res_blocks', 10))
-            old_nnet = DotsAndBoxesNet(game, args.get('num_filters', 128), 
-                                       args.get('num_res_blocks', 10)) if old_state_dict else None
+        # 创建模型实例
+        new_nnet = DotsAndBoxesNet(game, args)
+        old_nnet = DotsAndBoxesNet(game, args) if old_state_dict else None
         
         # 加载模型权重
         new_nnet.load_state_dict(new_state_dict, strict=False)

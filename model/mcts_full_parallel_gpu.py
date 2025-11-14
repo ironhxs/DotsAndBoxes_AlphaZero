@@ -32,7 +32,7 @@ def worker_self_play_with_gpu(worker_id, game_args, mcts_args, nnet_state_dict, 
         progress_dict: 共享进度字典
     """
     from model.game import DotsAndBoxesGame
-    from model.model_transformer import DotsAndBoxesTransformer
+    from model.model import DotsAndBoxesNet
     
     # 设置随机种子
     np.random.seed(seed_base + worker_id)
@@ -43,11 +43,9 @@ def worker_self_play_with_gpu(worker_id, game_args, mcts_args, nnet_state_dict, 
     
     # 初始化神经网络（每个 worker 独立的 GPU 副本）
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    nnet = DotsAndBoxesTransformer(
+    nnet = DotsAndBoxesNet(
         game=game,
-        num_blocks=mcts_args['num_res_blocks'],
-        num_filters=mcts_args['num_filters'],
-        num_heads=mcts_args['num_heads']
+        args=mcts_args
     ).to(device)
     
     # 加载权重，允许部分匹配（因为模型可能有动态创建的参数）

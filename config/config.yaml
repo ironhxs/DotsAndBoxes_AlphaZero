@@ -5,7 +5,7 @@
 defaults:
   - _self_
   - game: dots_and_boxes
-  - model: transformer  # 切换到 Transformer (原来是 resnet)
+  - model: resnet  # 使用ResNet (更快更稳定)
   - trainer: alphazero
 
 # 运行模式
@@ -17,27 +17,41 @@ gpu_ids: "0"
 seed: 42
 
 # 训练配置
-num_iterations: 1000        # AlphaZero 总迭代次数
+num_iterations: 200        # AlphaZero 总迭代次数（适合当前算力）
 checkpoint_interval: 30     # 每隔多少次迭代保存模型
-eval_interval: 20            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
+eval_interval: 5            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
 
 # 自我对弈配置
-num_self_play_games: 100    # 每次迭代的自我对弈局数（增加工作量）
-num_parallel_games: 25      # 并行对弈的游戏数（12→16，更多worker）
-temperature_threshold: 15   # 前N步使用温度采样，之后贪心
+num_self_play_games: 200    # 每次迭代的自我对弈局数（增加工作量）
+num_parallel_games: 30      # 并行对弈的游戏数（12→16，更多worker）
+temperature_threshold: 30   # 前30步使用温度采样（AlphaZero标准），之后贪心
 
 # MCTS 配置
-num_simulations: 800        # MCTS 模拟次数（100→400，增加计算量）
+num_simulations: 1200       # MCTS 模拟次数（800→1200，提高策略质量，降低策略损失）
 cpuct: 1.25                  # UCB 探索常数
 dirichlet_alpha: 0.3        # Dirichlet 噪声参数
 dirichlet_epsilon: 0.25     # 添加噪声的比例
 
 # 神经网络训练配置
-batch_size: 7200            # 增大 batch（512→1024，充分利用显存）
-learning_rate: 0.001
+batch_size: 4096            # 从7200降低到4096（提高泛化能力，避免过拟合）
+learning_rate: 0.001        # AlphaZero标准lr（SGD+grad_clip=2.0可以稳定训练）
+optimizer: "sgd"            # 使用SGD+Momentum（AlphaZero标准配置）
+momentum: 0.9               # SGD动量参数（AlphaZero论文标准）
+nesterov: true              # 使用Nesterov动量
 weight_decay: 1e-4
-train_epochs: 300            # 增加训练轮数 (1→10)
-replay_buffer_size: 60000  # 经验池大小 (360000→180000, 约保留10次迭代, 加快训练)
+train_epochs: 20             # AlphaZero标准:每样本训练~4次
+replay_buffer_size: 60000   # 保留10次迭代,平衡新鲜度和稳定性
+
+# 早停机制 (防止过度训练浪费时间)
+patience: 5                 # epochs少了,early stopping也要快
+min_delta: 0.0001           # 损失改进阈值
+
+# 梯度控制（解决梯度爆炸）
+grad_clip: 2.0              # 从5.0降低到2.0（更严格的梯度裁剪）
+
+# 训练恢复
+resume: false               # 从头开始训练（旧checkpoint包含错误配置）
+resume_file: "latest.pth"   # 恢复用的检查点文件
 
 # 并行优化参数
 use_parallel: true
@@ -59,10 +73,10 @@ tensorboard: true
 
 # Arena 配置（模型对战）
 arena_mode: "gpu_parallel"  # gpu_parallel（GPU多进程，最快）, serial（串行）
-arena_compare: 8          # Arena 对战局数
+arena_compare: 20           # Arena 对战局数（从8增加到40，提高评估准确性）
 arena_threshold: 0.55       # 新模型胜率阈值（超过才替换旧模型）
 arena_num_workers: 20       # Arena 并行进程数
-arena_mcts_simulations: 1200 # Arena MCTS 模拟次数（1.5倍于训练，确保评估精度）
+arena_mcts_simulations: 1200 # Arena MCTS 模拟次数（1.5倍于训练，AlphaZero用2倍但我们算力有限）
 update_threshold: 0.55      # 更新阈值（兼容旧参数名）
 
 # 可视化
