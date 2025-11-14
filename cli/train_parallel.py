@@ -145,6 +145,10 @@ def load_config_from_yaml(config_path='config/config.yaml'):
         # 检查点
         'checkpoint': './results/checkpoints',
         'checkpoint_interval': config.get('checkpoint_interval', 10),
+        
+        # Resume配置 (关键！之前忘记加载了)
+        'resume': config.get('resume', False),
+        'resume_file': config.get('resume_file', 'latest.pth'),
     }
     
     return args, config
@@ -187,6 +191,73 @@ def main():
     
     # 初始化并行 Coach
     coach = ParallelCoach(game, nnet, args)
+    
+    # ========== 显式输出Checkpoint加载状态 ==========
+    print("\n" + "="*60)
+    print("Checkpoint 加载状态")
+    print("="*60)
+    
+    resume_enabled = args.get('resume', False)
+    resume_file = args.get('resume_file', 'latest.pth')
+    checkpoint_path = os.path.join(args['checkpoint'], resume_file)
+    
+    print(f"Resume配置: {resume_enabled} (类型: {type(resume_enabled).__name__})")
+    print(f"Resume文件: {resume_file}")
+    print(f"完整路径: {checkpoint_path}")
+    print(f"文件存在: {os.path.exists(checkpoint_path)}")
+    
+    # Resume训练（如果配置了）
+    if resume_enabled:
+        if os.path.exists(checkpoint_path):
+            print(f"\n✅ 开始加载checkpoint...")
+            checkpoint = torch.load(checkpoint_path)
+            
+            # ✅ 加载到coach.nnet (不是局部nnet变量!)
+            coach.nnet.load_state_dict(checkpoint['state_dict'])
+            print(f"  ✓ 模型权重已加载到 coach.nnet")
+            
+            # 恢复训练历史
+            if 'train_examples_history' in checkpoint:
+                from collections import deque
+                coach.train_examples_history = deque(
+                    checkpoint['train_examples_history'], 
+                    maxlen=coach.train_examples_history.maxlen
+                )
+                print(f"  ✓ 经验池: {len(coach.train_examples_history)} 次迭代, {sum(len(x) for x in coach.train_examples_history)} 样本")
+            
+            # 恢复previous_nnet (Arena baseline)
+            if 'previous_state_dict' in checkpoint and checkpoint['previous_state_dict']:
+                coach.previous_nnet.load_state_dict(checkpoint['previous_state_dict'])
+                print(f"  ✓ Arena baseline (previous_nnet) 已恢复")
+            else:
+                print(f"  ⚠️  未找到previous_state_dict，Arena baseline将是当前模型副本")
+            
+            # ✅ 先初始化优化器，再恢复状态
+            coach._initialize_global_optimizer()
+            
+            # 恢复优化器状态
+            if 'optimizer_state' in checkpoint and checkpoint['optimizer_state']:
+                coach.global_optimizer.load_state_dict(checkpoint['optimizer_state'])
+                current_lr = coach.global_optimizer.param_groups[0]['lr']
+                print(f"  ✓ 优化器状态已恢复 (当前lr: {current_lr})")
+            else:
+                print(f"  ⚠️  未找到optimizer_state，将使用初始学习率")
+            
+            # 恢复学习率调度器
+            if 'scheduler_state' in checkpoint and checkpoint['scheduler_state']:
+                coach.global_scheduler.load_state_dict(checkpoint['scheduler_state'])
+                print(f"  ✓ 学习率调度器已恢复")
+            else:
+                print(f"  ⚠️  未找到scheduler_state，将使用初始调度")
+            
+            print(f"\n✅ Resume完成！将从断点继续训练")
+        else:
+            print(f"\n❌ Resume失败: 文件不存在")
+            print(f"   将从头开始训练（随机初始化权重）")
+    else:
+        print(f"\n⭕ Resume未启用，从头开始训练（随机初始化权重）")
+    
+    print("="*60 + "\n")
     
     # 开始训练
     try:

@@ -18,8 +18,8 @@ seed: 42
 
 # 训练配置
 num_iterations: 200        # AlphaZero 总迭代次数（适合当前算力）
-checkpoint_interval: 30     # 每隔多少次迭代保存模型
-eval_interval: 5            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
+checkpoint_interval: 5     # 每隔多少次迭代保存模型
+eval_interval: 10            # 每隔多少次迭代进行 Arena 对战评估（控制 arena_interval）
 
 # 自我对弈配置
 num_self_play_games: 200    # 每次迭代的自我对弈局数（增加工作量）
@@ -39,7 +39,7 @@ optimizer: "sgd"            # 使用SGD+Momentum（AlphaZero标准配置）
 momentum: 0.9               # SGD动量参数（AlphaZero论文标准）
 nesterov: true              # 使用Nesterov动量
 weight_decay: 1e-4
-train_epochs: 20             # AlphaZero标准:每样本训练~4次
+train_epochs: 200             # AlphaZero标准:每样本训练~4次
 replay_buffer_size: 60000   # 保留10次迭代,平衡新鲜度和稳定性
 
 # 早停机制 (防止过度训练浪费时间)
@@ -50,8 +50,8 @@ min_delta: 0.0001           # 损失改进阈值
 grad_clip: 2.0              # 从5.0降低到2.0（更严格的梯度裁剪）
 
 # 训练恢复
-resume: false               # 从头开始训练（旧checkpoint包含错误配置）
-resume_file: "latest.pth"   # 恢复用的检查点文件
+resume: true               # 是否从checkpoint恢复训练
+resume_file: "best_10.pth"   # 恢复用的检查点文件
 
 # 并行优化参数
 use_parallel: true
@@ -73,7 +73,7 @@ tensorboard: true
 
 # Arena 配置（模型对战）
 arena_mode: "gpu_parallel"  # gpu_parallel（GPU多进程，最快）, serial（串行）
-arena_compare: 20           # Arena 对战局数（从8增加到40，提高评估准确性）
+arena_compare: 10           # Arena 对战局数（从8增加到40，提高评估准确性）
 arena_threshold: 0.55       # 新模型胜率阈值（超过才替换旧模型）
 arena_num_workers: 20       # Arena 并行进程数
 arena_mcts_simulations: 1200 # Arena MCTS 模拟次数（1.5倍于训练，AlphaZero用2倍但我们算力有限）

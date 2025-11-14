@@ -538,7 +538,7 @@ class BaseCoach(ABC):
     
     def save_checkpoint(self, filename='checkpoint.pth'):
         """
-        保存模型检查点
+        保存模型检查点（包含完整训练状态用于resume）
         
         Args:
             filename: 文件名
@@ -548,10 +548,21 @@ class BaseCoach(ABC):
         
         filepath = os.path.join(checkpoint_dir, filename)
         
-        torch.save({
+        # 保存完整训练状态
+        checkpoint = {
             'state_dict': self.nnet.state_dict(),
-            'args': self.args
-        }, filepath)
+            'args': self.args,
+            'train_examples_history': list(self.train_examples_history),  # deque转list
+            'previous_state_dict': self.previous_nnet.state_dict() if self.previous_nnet else None,
+        }
+        
+        # 如果有全局优化器，也保存
+        if hasattr(self, 'global_optimizer') and self.global_optimizer is not None:
+            checkpoint['optimizer_state'] = self.global_optimizer.state_dict()
+            if self.global_scheduler is not None:
+                checkpoint['scheduler_state'] = self.global_scheduler.state_dict()
+        
+        torch.save(checkpoint, filepath)
         
         # 静默保存，不打印信息
         # if 'best' in filename or 'checkpoint' in filename:
