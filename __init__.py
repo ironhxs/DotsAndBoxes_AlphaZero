@@ -1,26 +1,17 @@
 # -*- coding: utf-8 -*-
-# @Time : 2025/11/8
-# @Author : ironhxs
-# @File : __init__.py
-
 """
-点格棋 AlphaZero 训练项目
-基于 OpenSpiel 和 PyTorch 实现的轻量级 AlphaZero
+Dots and Boxes AlphaZero
+========================
+
+An AlphaZero implementation for the Dots and Boxes game, featuring:
+- Monte Carlo Tree Search (MCTS) with neural network guidance
+- Parallel self-play training with GPU acceleration
+- Arena-based model selection (55%+ win rate threshold)
+- ResNet architecture with SE attention blocks
+
+Repository: https://github.com/ironhxs/DotsAndBoxes_AlphaZero
 """
 
 __version__ = "1.0.0"
 __author__ = "ironhxs"
-
-from . import config
-from .game import DotsAndBoxesGame
-from .model import DotsAndBoxesNNet
-from .mcts import MCTS
-from .train import Trainer
-
-__all__ = [
-    'config',
-    'DotsAndBoxesGame',
-    'DotsAndBoxesNNet',
-    'MCTS',
-    'Trainer',
-]
+__license__ = "MIT"

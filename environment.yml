@@ -1,16 +1,20 @@
+# Conda environment for Dots and Boxes AlphaZero
+# Usage: conda env create -f environment.yml
 name: alphazero
 channels:
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/
-  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - pytorch
+  - nvidia
+  - conda-forge
   - defaults
 dependencies:
   - python=3.10
-  - pytorch==2.5.1
+  - pytorch>=2.0
   - torchvision
-  - torchaudio
   - pytorch-cuda=12.1
-  - hydra-core
-  - tensorboard
+  - numpy
   - tqdm
   - pyyaml
-prefix: /root/miniconda3/envs/alphazero
+  - tensorboard
+  - pip
+  - pip:
+    - open_spiel

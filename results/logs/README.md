@@ -1,23 +1,47 @@
-# 训练日志目录
+# 📊 Training Logs
 
-## TensorBoard 可视化
+This directory stores TensorBoard logs and training outputs.
 
-### 启动 TensorBoard
+## TensorBoard Visualization
+
+### Launch TensorBoard
 
 ```bash
-# 方法1: 使用脚本
-./cli/tensorboard.sh
+# Start TensorBoard server
+tensorboard --logdir=results/logs --port=6006
 
-# 方法2: 直接命令
-tensorboard --logdir=results/logs/tensorboard --host=0.0.0.0 --port=6006
+# Access at http://localhost:6006
 ```
 
-### 访问地址
+### Monitored Metrics
 
-- **本地**: http://localhost:6006
-- **远程**: http://YOUR_SERVER_IP:6006
+| Category | Metric | Description |
+|----------|--------|-------------|
+| **Loss** | Policy | Cross-entropy loss for action probabilities |
+| | Value | MSE loss for position evaluation |
+| | Total | Combined loss (Policy + Value) |
+| **Training** | LearningRate | Current learning rate |
+| | GradNorm | Gradient norm (monitor for explosions) |
+| **Arena** | WinRate | New model vs old model win rate |
+| | Accepted | Whether new model was accepted (1/0) |
+| **Data** | TotalSamples | Samples in replay buffer |
 
-### 记录的指标
+## Directory Structure
+
+```
+results/
+├── logs/               # TensorBoard event files
+│   └── README.md       # This file
+└── checkpoints/        # Model checkpoints (created during training)
+    ├── best.pth        # Best model (survives Arena challenges)
+    ├── latest.pth      # Latest checkpoint
+    └── checkpoint_N.pth # Periodic checkpoints
+```
+
+## Note
+
+Checkpoints and logs are excluded from git via `.gitignore`.
+
 
 #### 1. **Loss (损失)**
 - `Loss/policy` - 策略网络损失 (π)
